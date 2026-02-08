@@ -231,6 +231,11 @@ export class CliSummary {
         console.log(chalk.bgYellow.black.bold("  ║           ⚠️  REVIEW REQUIRED  ⚠️                      ║"));
         console.log(chalk.bgYellow.black.bold("  ╚════════════════════════════════════════════════════════╝"));
         break;
+      case "INCONCLUSIVE":
+        console.log(chalk.bgMagenta.white.bold("  ╔════════════════════════════════════════════════════════╗"));
+        console.log(chalk.bgMagenta.white.bold("  ║           ❓  SCAN INCOMPLETE  ❓                      ║"));
+        console.log(chalk.bgMagenta.white.bold("  ╚════════════════════════════════════════════════════════╝"));
+        break;
       case "SAFE":
         console.log(chalk.bgGreen.white.bold("  ╔════════════════════════════════════════════════════════╗"));
         console.log(chalk.bgGreen.white.bold("  ║            ✅  SAFE TO DEPLOY  ✅                      ║"));
@@ -373,6 +378,11 @@ export class CliSummary {
         } else {
           console.log(chalk.red(`  Critical vulnerabilities require remediation.`));
         }
+        break;
+      case "INCONCLUSIVE":
+        console.log(chalk.magenta.bold("  SCAN INCOMPLETE"));
+        console.log(chalk.magenta(`  ${verdict.reason}`));
+        console.log(chalk.magenta("  Cannot verify security - failing safely."));
         break;
       case "REVIEW_REQUIRED":
         console.log(chalk.yellow.bold("  DEPLOYMENT REQUIRES REVIEW"));

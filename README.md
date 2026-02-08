@@ -166,6 +166,7 @@ sec-bot scan [options]
 | `--fail-on <severity>` | Legacy: fail on severity (now uses attack feasibility) |
 | `-v, --verbose` | Enable verbose output with attack chains and remediations |
 | `-q, --quiet` | Suppress non-essential output |
+| `--ci` | **CI mode** - minimal, deterministic output for pipelines |
 | `--skip-static` | Skip static analysis |
 | `--skip-container` | Skip container scanning |
 | `--skip-dynamic` | Skip dynamic API scanning |
@@ -186,15 +187,25 @@ sec-bot scan -t http://localhost:3000 --skip-static --skip-container -v
 
 # Output reports for CI/CD integration
 sec-bot scan -t http://localhost:3000 -f json,markdown -o ./reports
+
+# CI mode - minimal, deterministic output
+sec-bot scan -t http://localhost:3000 --ci
+# Output:
+# SECURITY STATUS: PASSED|FAILED|INCONCLUSIVE
+# Reason: <one-line reason>
 ```
 
 ### Exit Codes
 
-| Code | Description |
-|------|-------------|
-| `0` | SAFE or REVIEW_REQUIRED - no confirmed exploits |
-| `1` | UNSAFE - confirmed exploits detected, deployment blocked |
-| `2` | Configuration error |
+| Code | Verdict | Description |
+|------|---------|-------------|
+| `0` | SAFE | No exploitable vulnerabilities detected |
+| `0` | REVIEW_REQUIRED | Findings need review, but no confirmed exploits |
+| `1` | UNSAFE | Confirmed exploits detected - deployment blocked |
+| `1` | INCONCLUSIVE | Scan failed - cannot verify security, failing safely |
+| `2` | - | Configuration error |
+
+**Key principle:** `SCAN FAILED ≠ NO VULNERABILITIES`. If scanners fail, the verdict is `INCONCLUSIVE` and exits non-zero.
 
 ## How Attack Feasibility Works
 

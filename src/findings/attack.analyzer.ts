@@ -55,7 +55,8 @@ export interface AttackChain {
   impact: "critical" | "high" | "medium" | "low";
 }
 
-export type DeploymentVerdict = "SAFE" | "UNSAFE" | "REVIEW_REQUIRED";
+// INCONCLUSIVE = scan failed, cannot determine security status
+export type DeploymentVerdict = "SAFE" | "UNSAFE" | "REVIEW_REQUIRED" | "INCONCLUSIVE";
 
 export interface SecurityVerdict {
   verdict: DeploymentVerdict;
@@ -66,6 +67,8 @@ export interface SecurityVerdict {
   confirmedExploits: Finding[];          // Backward compat - findings that were exploited
   attackChains: AttackChain[];
   recommendations: ContextualRemediation[];
+  scanIncomplete?: boolean;              // True if scanners failed
+  failedScanners?: string[];             // Which scanners failed
 }
 
 export interface ContextualRemediation {
@@ -560,6 +563,36 @@ export class AttackAnalyzer {
     }
 
     return { type: "none", endpoint, capability: "", finding, evidence: "" };
+  }
+
+  /**
+   * Generate deployment verdict with scan status awareness
+   * CRITICAL: If scanners failed, verdict is INCONCLUSIVE (not SAFE)
+   */
+  generateVerdictWithStatus(
+    findings: Finding[],
+    scanStatus: { isComplete: boolean; failedScanners: string[] }
+  ): SecurityVerdict {
+    // First check for scanner failures
+    if (!scanStatus.isComplete && scanStatus.failedScanners.length > 0) {
+      // SCAN FAILED ≠ NO VULNERABILITIES
+      // We cannot claim safety if we didn't complete the scan
+      return {
+        verdict: "INCONCLUSIVE",
+        reason: `Scan incomplete: ${scanStatus.failedScanners.join(", ")} failed. Cannot determine security status.`,
+        breaches: [],
+        operationalConclusion: "",
+        criticalFindings: [],
+        confirmedExploits: [],
+        attackChains: [],
+        recommendations: [],
+        scanIncomplete: true,
+        failedScanners: scanStatus.failedScanners,
+      };
+    }
+
+    // Otherwise, use normal verdict logic
+    return this.generateVerdict(findings);
   }
 
   /**

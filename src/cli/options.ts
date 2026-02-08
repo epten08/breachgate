@@ -8,6 +8,7 @@ export interface ScanOptions {
   failOn?: Severity;
   verbose?: boolean;
   quiet?: boolean;
+  ci?: boolean;  // Deterministic CI mode - minimal output
   skipStatic?: boolean;
   skipContainer?: boolean;
   skipDynamic?: boolean;

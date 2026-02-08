@@ -125,6 +125,13 @@ export class MarkdownReporter {
         lines.push("╚══════════════════════════════════════════════════════════╝");
         lines.push("```");
         break;
+      case "INCONCLUSIVE":
+        lines.push("```");
+        lines.push("╔══════════════════════════════════════════════════════════╗");
+        lines.push("║             ❓  SCAN INCOMPLETE  ❓                       ║");
+        lines.push("╚══════════════════════════════════════════════════════════╝");
+        lines.push("```");
+        break;
       case "REVIEW_REQUIRED":
         lines.push("```");
         lines.push("╔══════════════════════════════════════════════════════════╗");
@@ -277,6 +284,9 @@ export class MarkdownReporter {
         } else {
           lines.push("**No.** Active exploitation was successful during testing. This application has confirmed security vulnerabilities that can be exploited by attackers.");
         }
+        break;
+      case "INCONCLUSIVE":
+        lines.push(`**Unknown.** ${verdict.reason} Security status cannot be determined - failing safely.`);
         break;
       case "REVIEW_REQUIRED":
         lines.push("**Not yet.** Significant security findings require review before deployment. While no active exploitation was confirmed, the risk profile requires security team sign-off.");

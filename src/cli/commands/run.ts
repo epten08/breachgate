@@ -2,9 +2,8 @@ import { Command } from "commander";
 import { ScanOptions, parseSeverity, parseFormats } from "../options";
 import { loadConfig, validateConfig, SecurityBotConfig } from "../../core/config.loader";
 import { logger } from "../../core/logger";
-import { Finding } from "../../findings/finding";
-import { AttackAnalyzer } from "../../findings/attack.analyzer";
-import { Orchestrator } from "../../orchestrator/orchestrator";
+import { AttackAnalyzer, SecurityVerdict } from "../../findings/attack.analyzer";
+import { Orchestrator, ScanResult } from "../../orchestrator/orchestrator";
 import { EnvironmentManager } from "../../orchestrator/environment.manager";
 import { ExecutionContext } from "../../orchestrator/context";
 import { TrivyStaticScanner } from "../../scanners/static/trivy.static";
@@ -33,6 +32,7 @@ export function createRunCommand(): Command {
     )
     .option("-v, --verbose", "Enable verbose output")
     .option("-q, --quiet", "Suppress non-essential output")
+    .option("--ci", "CI mode - minimal, deterministic output for pipelines")
     .option("--skip-static", "Skip static analysis")
     .option("--skip-container", "Skip container scanning")
     .option("--skip-dynamic", "Skip dynamic API scanning")
@@ -44,15 +44,54 @@ export function createRunCommand(): Command {
   return cmd;
 }
 
+/**
+ * Output deterministic CI result
+ * Format:
+ *   SECURITY STATUS: PASSED|FAILED|INCONCLUSIVE
+ *   Reason: <one-line reason>
+ */
+function outputCiResult(verdict: SecurityVerdict): void {
+  let status: string;
+
+  switch (verdict.verdict) {
+    case "SAFE":
+      status = "PASSED";
+      break;
+    case "UNSAFE":
+      status = "FAILED";
+      break;
+    case "REVIEW_REQUIRED":
+      status = "PASSED";  // Don't fail CI, but note in reason
+      break;
+    case "INCONCLUSIVE":
+      status = "INCONCLUSIVE";
+      break;
+  }
+
+  console.log(`SECURITY STATUS: ${status}`);
+  console.log(`Reason: ${verdict.reason}`);
+
+  // For breaches, also output the operational conclusion
+  if (verdict.breaches && verdict.breaches.length > 0) {
+    console.log(`Breach: ${verdict.operationalConclusion}`);
+  }
+}
+
 async function runScan(options: ScanOptions): Promise<void> {
-  // Configure logger based on options
-  if (options.verbose) {
+  const isCiMode = options.ci === true;
+
+  // In CI mode, suppress all logs except final output
+  if (isCiMode) {
+    logger.setLevel("error");
+  } else if (options.verbose) {
     logger.setLevel("debug");
   } else if (options.quiet) {
     logger.setLevel("warn");
   }
 
-  logger.banner("Security Bot - Scan");
+  if (!isCiMode) {
+    logger.banner("Security Bot - Scan");
+  }
 
   // Load and validate config
   let config: SecurityBotConfig;
@@ -91,31 +130,45 @@ async function runScan(options: ScanOptions): Promise<void> {
 
     validateConfig(config);
   } catch (err) {
-    logger.error(`Configuration error: ${(err as Error).message}`);
+    if (isCiMode) {
+      console.log("SECURITY STATUS: INCONCLUSIVE");
+      console.log(`Reason: Configuration error: ${(err as Error).message}`);
+    } else {
+      logger.error(`Configuration error: ${(err as Error).message}`);
+    }
     process.exit(2);
   }
 
-  logger.info("Configuration loaded", {
-    target: config.target.baseUrl || config.target.dockerCompose,
-    failOn: config.thresholds.failOn,
-  });
+  if (!isCiMode) {
+    logger.info("Configuration loaded", {
+      target: config.target.baseUrl || config.target.dockerCompose,
+      failOn: config.thresholds.failOn,
+    });
 
-  // Log enabled scanners
-  const enabledScanners: string[] = [];
-  if (config.scanners.static.enabled) enabledScanners.push("static");
-  if (config.scanners.container.enabled) enabledScanners.push("container");
-  if (config.scanners.dynamic.enabled) enabledScanners.push("dynamic");
-  if (config.scanners.ai.enabled) enabledScanners.push("ai");
+    // Log enabled scanners
+    const enabledScanners: string[] = [];
+    if (config.scanners.static.enabled) enabledScanners.push("static");
+    if (config.scanners.container.enabled) enabledScanners.push("container");
+    if (config.scanners.dynamic.enabled) enabledScanners.push("dynamic");
+    if (config.scanners.ai.enabled) enabledScanners.push("ai");
 
-  logger.info(`Enabled scanners: ${enabledScanners.join(", ") || "none"}`);
+    logger.info(`Enabled scanners: ${enabledScanners.join(", ") || "none"}`);
+  }
 
   // Setup environment
   const envManager = new EnvironmentManager(config);
-  let findings: Finding[] = [];
+  let scanResult: ScanResult = {
+    findings: [],
+    failedScanners: [],
+    completedScanners: [],
+    isComplete: false,
+  };
   const scanStartTime = Date.now();
 
   try {
-    logger.banner("Environment Setup");
+    if (!isCiMode) {
+      logger.banner("Environment Setup");
+    }
     const envInfo = await envManager.setup();
 
     // Build execution context
@@ -138,60 +191,113 @@ async function runScan(options: ScanOptions): Promise<void> {
     const scanners = createScanners(config);
     const enabledCategories = getEnabledCategories(config);
 
-    // Run orchestrator
-    logger.banner("Running Scans");
+    // Run orchestrator with status tracking
+    if (!isCiMode) {
+      logger.banner("Running Scans");
+    }
     const orchestrator = new Orchestrator(scanners, {
       enabledCategories,
       continueOnError: true,
     });
 
-    findings = await orchestrator.run(ctx);
+    // Use runWithStatus to track scanner failures
+    scanResult = await orchestrator.runWithStatus(ctx);
 
-    // Display CLI summary
-    logger.banner("Results");
-    const reportGenerator = new ReportGenerator(config.reporting);
-    reportGenerator.renderCliSummary(findings, {
-      verbose: options.verbose,
-      showEvidence: config.reporting.includeEvidence,
-    });
-
-    // Generate reports
-    if (config.reporting.formats.length > 0) {
-      logger.banner("Generating Reports");
-      const reports = await reportGenerator.generate(findings, {
-        targetUrl: ctx.targetUrl,
-        scanDuration: Date.now() - scanStartTime,
+    // Display CLI summary (skip in CI mode)
+    if (!isCiMode) {
+      logger.banner("Results");
+      const reportGenerator = new ReportGenerator(config.reporting);
+      reportGenerator.renderCliSummary(scanResult.findings, {
+        verbose: options.verbose,
+        showEvidence: config.reporting.includeEvidence,
       });
 
-      for (const report of reports) {
-        logger.info(`Generated ${report.format} report: ${report.path}`);
+      // Generate reports
+      if (config.reporting.formats.length > 0) {
+        logger.banner("Generating Reports");
+        const reports = await reportGenerator.generate(scanResult.findings, {
+          targetUrl: ctx.targetUrl,
+          scanDuration: Date.now() - scanStartTime,
+        });
+
+        for (const report of reports) {
+          logger.info(`Generated ${report.format} report: ${report.path}`);
+        }
       }
     }
 
   } catch (err) {
-    logger.error(`Scan failed: ${(err as Error).message}`);
+    if (isCiMode) {
+      console.log("SECURITY STATUS: INCONCLUSIVE");
+      console.log(`Reason: Scan failed: ${(err as Error).message}`);
+    } else {
+      logger.error(`Scan failed: ${(err as Error).message}`);
+    }
     process.exit(1);
   } finally {
     await envManager.teardown();
   }
 
-  // Determine exit code based on attack feasibility analysis
-  const attackAnalyzer = new AttackAnalyzer();
-  const verdict = attackAnalyzer.generateVerdict(findings);
+  // ==========================================================================
+  // DETERMINE VERDICT
+  // ==========================================================================
+  // Key rules:
+  // 1. If scanners failed → INCONCLUSIVE (not SAFE)
+  // 2. If exploit confirmed → FAIL (automatic, not weighted)
+  // 3. Otherwise use attack feasibility analysis
 
-  if (verdict.verdict === "UNSAFE") {
-    logger.error(`Deployment blocked: ${verdict.reason}`);
-    if (verdict.confirmedExploits.length > 0) {
-      logger.error(`${verdict.confirmedExploits.length} confirmed exploit(s) detected`);
-    }
-    process.exit(1);
-  } else if (verdict.verdict === "REVIEW_REQUIRED") {
-    logger.warn(`Review required: ${verdict.reason}`);
-    process.exit(0); // Don't fail, but warn
-  } else {
-    logger.info("Security analysis complete - safe to deploy");
-    process.exit(0);
+  const attackAnalyzer = new AttackAnalyzer();
+
+  // Use generateVerdictWithStatus to properly handle scanner failures
+  const verdict = attackAnalyzer.generateVerdictWithStatus(scanResult.findings, {
+    isComplete: scanResult.isComplete,
+    failedScanners: scanResult.failedScanners,
+  });
+
+  // CI mode: output deterministic result
+  if (isCiMode) {
+    outputCiResult(verdict);
   }
+
+  // Determine exit code
+  let exitCode = 0;
+
+  switch (verdict.verdict) {
+    case "UNSAFE":
+      if (!isCiMode) {
+        logger.error(`Deployment blocked: ${verdict.reason}`);
+        if (verdict.confirmedExploits.length > 0) {
+          logger.error(`${verdict.confirmedExploits.length} confirmed exploit(s) detected`);
+        }
+      }
+      exitCode = 1;
+      break;
+
+    case "INCONCLUSIVE":
+      // Scanner failure = cannot determine security status = fail safe
+      if (!isCiMode) {
+        logger.error(`Scan incomplete: ${verdict.reason}`);
+        logger.error("Cannot verify security - failing safely");
+      }
+      exitCode = 1;
+      break;
+
+    case "REVIEW_REQUIRED":
+      if (!isCiMode) {
+        logger.warn(`Review required: ${verdict.reason}`);
+      }
+      exitCode = 0; // Don't fail CI, but warn
+      break;
+
+    case "SAFE":
+      if (!isCiMode) {
+        logger.info("Security analysis complete - safe to deploy");
+      }
+      exitCode = 0;
+      break;
+  }
+
+  process.exit(exitCode);
 }
 
 function createScanners(config: SecurityBotConfig): Scanner[] {
@@ -224,4 +330,3 @@ function getEnabledCategories(config: SecurityBotConfig): ScannerCategory[] {
   if (config.scanners.ai.enabled) categories.push("ai");
   return categories;
 }
-
