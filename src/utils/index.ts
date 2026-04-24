@@ -1,2 +1,2 @@
-export * from "./fs";
-export * from "./network";
+export * from "./fs.js";
+export * from "./network.js";

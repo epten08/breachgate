@@ -23,6 +23,7 @@ export interface Finding {
 
   endpoint?: string;
   endpointContext?: EndpointContext;
+  role?: string;
   evidence: string;
 
   // Risk metrics

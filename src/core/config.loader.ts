@@ -1,8 +1,10 @@
 import { readFileSync, existsSync } from "fs";
+import { resolve } from "path";
 import { parse } from "yaml";
-import { ConfigError } from "./errors";
-import { logger } from "./logger";
-import { Severity } from "../findings/finding";
+import { ConfigError } from "./errors.js";
+import { logger } from "./logger.js";
+import { Severity } from "../findings/finding.js";
+import { PolicyConfig } from "../policy/policy.js";
 
 export interface EndpointConfig {
   path: string;
@@ -23,9 +25,49 @@ export interface TargetConfig {
 
 export interface AuthConfig {
   type: "jwt" | "apikey" | "session" | "none";
+  role?: string;
   token?: string;
   apiKey?: string;
   headerName?: string;
+  cookieName?: string;
+  cookieValue?: string;
+  headers?: Record<string, string>;
+  preScan?: AuthHookConfig;
+  roles?: AuthRoleConfig[];
+}
+
+export interface AuthRoleConfig {
+  name: string;
+  type?: "jwt" | "apikey" | "session" | "none";
+  token?: string;
+  apiKey?: string;
+  headerName?: string;
+  cookieName?: string;
+  cookieValue?: string;
+  headers?: Record<string, string>;
+  preScan?: AuthHookConfig;
+}
+
+export interface AuthHookConfig {
+  command: string;
+  args?: string[];
+  output?: "raw" | "json";
+  tokenField?: string;
+  apiKeyField?: string;
+  cookieField?: string;
+  headersField?: string;
+  timeout?: number;
+}
+
+export type SafetyProfile = "passive" | "safe-active" | "full-active";
+
+export interface SafetyConfig {
+  profile?: SafetyProfile;
+  allowProductionTargets?: boolean;
+  allowedHosts?: string[];
+  excludedPaths?: string[];
+  maxRequestsPerSecond?: number;
+  allowDestructiveMethods?: boolean;
 }
 
 export interface ScannersConfig {
@@ -57,17 +99,25 @@ export interface ScannersConfig {
     model?: string;
     baseUrl?: string;
     maxTests?: number;
+    deterministic?: boolean;
+    temperature?: number;
+    maxTokens?: number;
+    replayTests?: string;
+    saveTests?: string;
   };
 }
 
+export type ReportFormat = "markdown" | "json" | "sarif";
+
 export interface ReportingConfig {
   outputDir: string;
-  formats: ("markdown" | "json")[];
+  formats: ReportFormat[];
   includeEvidence: boolean;
 }
 
 export interface SecurityBotConfig {
   version: string;
+  configFilePath?: string;
   target: TargetConfig;
   auth?: AuthConfig;
   scanners: ScannersConfig;
@@ -75,6 +125,8 @@ export interface SecurityBotConfig {
     failOn: Severity;
     warnOn: Severity;
   };
+  safety?: SafetyConfig;
+  policy?: PolicyConfig;
   reporting: ReportingConfig;
 }
 
@@ -90,6 +142,14 @@ const DEFAULT_CONFIG: SecurityBotConfig = {
   thresholds: {
     failOn: "HIGH",
     warnOn: "MEDIUM",
+  },
+  safety: {
+    profile: "safe-active",
+    allowProductionTargets: false,
+    allowedHosts: [],
+    excludedPaths: [],
+    maxRequestsPerSecond: 2,
+    allowDestructiveMethods: false,
   },
   reporting: {
     outputDir: "./security-reports",
@@ -110,9 +170,15 @@ export function loadConfig(configPath?: string): SecurityBotConfig {
 
   try {
     const content = readFileSync(path, "utf-8");
-    const parsed = parse(content) as Partial<SecurityBotConfig>;
-    return mergeConfig(DEFAULT_CONFIG, parsed);
+    const parsed = interpolateEnvValues(parse(content)) as Partial<SecurityBotConfig>;
+    return {
+      ...mergeConfig(DEFAULT_CONFIG, parsed),
+      configFilePath: resolve(path),
+    };
   } catch (err) {
+    if (err instanceof ConfigError) {
+      throw err;
+    }
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       throw new ConfigError(`Config file not found: ${path}`);
     }
@@ -142,6 +208,7 @@ function mergeConfig(
 ): SecurityBotConfig {
   return {
     version: overrides.version ?? defaults.version,
+    configFilePath: overrides.configFilePath ?? defaults.configFilePath,
     target: { ...defaults.target, ...overrides.target },
     auth: overrides.auth ?? defaults.auth,
     scanners: {
@@ -151,6 +218,15 @@ function mergeConfig(
       ai: { ...defaults.scanners.ai, ...overrides.scanners?.ai },
     },
     thresholds: { ...defaults.thresholds, ...overrides.thresholds },
+    safety: { ...defaults.safety, ...overrides.safety },
+    policy: overrides.policy ? {
+      ...defaults.policy,
+      ...overrides.policy,
+      profiles: {
+        ...defaults.policy?.profiles,
+        ...overrides.policy.profiles,
+      },
+    } : defaults.policy,
     reporting: { ...defaults.reporting, ...overrides.reporting },
   };
 }
@@ -168,15 +244,73 @@ export function validateConfig(config: SecurityBotConfig): void {
     }
   }
 
-  if (config.auth?.type === "jwt" && !config.auth.token) {
-    errors.push("JWT token must be provided when auth type is jwt");
+  const authHasRoles = (config.auth?.roles?.length || 0) > 0;
+
+  if (config.auth?.type === "jwt" && !authHasRoles && !config.auth.token && !config.auth.preScan) {
+    errors.push("JWT token or pre-scan hook must be provided when auth type is jwt");
   }
 
-  if (config.auth?.type === "apikey" && !config.auth.apiKey) {
-    errors.push("API key must be provided when auth type is apikey");
+  if (config.auth?.type === "apikey" && !authHasRoles && !config.auth.apiKey && !config.auth.preScan) {
+    errors.push("API key or pre-scan hook must be provided when auth type is apikey");
+  }
+
+  if (config.auth?.type === "session" && !authHasRoles && !config.auth.cookieValue && !config.auth.preScan) {
+    errors.push("Cookie value or pre-scan hook must be provided when auth type is session");
+  }
+
+  for (const role of config.auth?.roles || []) {
+    const type = role.type || config.auth?.type || "none";
+    if (type === "jwt" && !role.token && !role.preScan && !config.auth?.preScan) {
+      errors.push(`JWT token or pre-scan hook must be provided for auth role ${role.name}`);
+    }
+    if (type === "apikey" && !role.apiKey && !role.preScan && !config.auth?.preScan) {
+      errors.push(`API key or pre-scan hook must be provided for auth role ${role.name}`);
+    }
+    if (type === "session" && !role.cookieValue && !role.preScan && !config.auth?.preScan) {
+      errors.push(`Cookie value or pre-scan hook must be provided for auth role ${role.name}`);
+    }
+  }
+
+  if (config.safety?.maxRequestsPerSecond !== undefined && config.safety.maxRequestsPerSecond < 0) {
+    errors.push("safety.maxRequestsPerSecond must be zero or greater");
   }
 
   if (errors.length > 0) {
     throw new ConfigError(`Invalid configuration:\n  - ${errors.join("\n  - ")}`);
   }
+}
+
+function interpolateEnvValues(value: unknown, path = "config"): unknown {
+  if (typeof value === "string") {
+    return interpolateEnvString(value, path);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item, index) => interpolateEnvValues(item, `${path}[${index}]`));
+  }
+
+  if (value && typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+      result[key] = interpolateEnvValues(nested, `${path}.${key}`);
+    }
+    return result;
+  }
+
+  return value;
+}
+
+function interpolateEnvString(value: string, path: string): string {
+  return value.replace(/\$\{([A-Z0-9_]+)(?::-([^}]*))?\}/gi, (_match, name: string, fallback: string | undefined) => {
+    const envValue = process.env[name];
+    if (envValue !== undefined) {
+      return envValue;
+    }
+
+    if (fallback !== undefined) {
+      return fallback;
+    }
+
+    throw new ConfigError(`Missing environment variable ${name} referenced by ${path}`);
+  });
 }

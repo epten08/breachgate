@@ -1,5 +1,5 @@
-import { Finding, Severity, SEVERITY_WEIGHTS, EndpointContext } from "./finding";
-import { RawFinding } from "./raw.finding";
+import { Finding, Severity, SEVERITY_WEIGHTS, EndpointContext } from "./finding.js";
+import { RawFinding } from "./raw.finding.js";
 
 // =============================================================================
 // Interfaces

@@ -1,9 +1,9 @@
-import { Scanner } from "../scanner";
-import { ExecutionContext } from "../../orchestrator/context";
-import { RawFinding } from "../../findings/raw.finding";
-import { runProcess, checkCommand } from "../../core/process.runner";
-import { ScannerError } from "../../core/errors";
-import { logger } from "../../core/logger";
+import { Scanner } from "../scanner.js";
+import { ExecutionContext } from "../../orchestrator/context.js";
+import { RawFinding } from "../../findings/raw.finding.js";
+import { runProcess, checkCommand } from "../../core/process.runner.js";
+import { ScannerError, ScannerUnavailableError } from "../../core/errors.js";
+import { logger } from "../../core/logger.js";
 
 interface TrivyResult {
   SchemaVersion: number;
@@ -43,16 +43,20 @@ export class TrivyStaticScanner implements Scanner {
     const hasDocker = await checkCommand("docker");
 
     if (!hasTrivy && !hasDocker) {
-      logger.warn("Neither Trivy nor Docker available, skipping static scan");
-      return [];
+      throw new ScannerUnavailableError(
+        "Neither Trivy nor Docker is available for static scanning",
+        this.name
+      );
     }
 
     if (!hasTrivy && hasDocker) {
       // Check if trivy image is available
       const imageCheck = await runProcess("docker", ["images", "-q", "aquasec/trivy"], { timeout: 10000 });
       if (!imageCheck.stdout.trim()) {
-        logger.warn("Trivy Docker image not found. Pull with: docker pull aquasec/trivy");
-        return [];
+        throw new ScannerUnavailableError(
+          "Trivy Docker image not found. Pull with: docker pull aquasec/trivy",
+          this.name
+        );
       }
       this.useDocker = true;
       logger.info("Using Trivy via Docker");

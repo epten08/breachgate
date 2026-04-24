@@ -1,4 +1,4 @@
-import { Finding, EndpointContext } from "./finding";
+import { Finding, EndpointContext } from "./finding.js";
 
 // =============================================================================
 // Attack Feasibility Analysis

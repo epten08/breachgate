@@ -1,7 +1,7 @@
-import { RawFinding } from "./raw.finding";
-import { Finding, Severity } from "./finding";
-import { RiskEngine } from "./risk.engine";
-import { Deduplicator, DeduplicationOptions } from "./deduplicator";
+import { RawFinding } from "./raw.finding.js";
+import { Finding, Severity } from "./finding.js";
+import { RiskEngine } from "./risk.engine.js";
+import { Deduplicator, DeduplicationOptions } from "./deduplicator.js";
 import { v4 as uuid } from "uuid";
 
 export interface NormalizationOptions {
@@ -40,6 +40,7 @@ function normalizeSingle(raw: RawFinding): Finding {
     severity: mapSeverity(raw.severityHint),
     endpoint: raw.endpoint,
     endpointContext,
+    role: raw.role,
     evidence: raw.evidence ?? "No evidence provided",
     exploitability: risk.exploitability,
     confidence: risk.confidence,

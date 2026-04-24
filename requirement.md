@@ -1,4 +1,4 @@
-# Security Bot – Requirements Specification (MVP)
+# Breach Gate – Requirements Specification (MVP)
 
 ## 1. Purpose
 

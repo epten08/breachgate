@@ -27,6 +27,13 @@ export class ScannerError extends SecBotError {
   }
 }
 
+export class ScannerUnavailableError extends ScannerError {
+  constructor(message: string, scanner: string, cause?: Error) {
+    super(message, scanner, cause);
+    this.name = "ScannerUnavailableError";
+  }
+}
+
 export class EnvironmentError extends SecBotError {
   constructor(message: string, cause?: Error) {
     super(message, "ENVIRONMENT_ERROR", cause);

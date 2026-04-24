@@ -1,7 +1,7 @@
-import { AIClient, AIConfig } from "./adversary";
-import { PromptBuilder, EndpointInfo } from "./prompt.builder";
-import { ExecutionContext } from "../orchestrator/context";
-import { logger } from "../core/logger";
+import { AIClient, AIConfig } from "./adversary.js";
+import { PromptBuilder, EndpointInfo } from "./prompt.builder.js";
+import { ExecutionContext } from "../orchestrator/context.js";
+import { logger } from "../core/logger.js";
 
 export interface SecurityTestCase {
   name: string;

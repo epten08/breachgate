@@ -1,9 +1,9 @@
-import { Scanner } from "../scanner";
-import { ExecutionContext } from "../../orchestrator/context";
-import { RawFinding } from "../../findings/raw.finding";
-import { runProcess, checkCommand } from "../../core/process.runner";
-import { ScannerError } from "../../core/errors";
-import { logger } from "../../core/logger";
+import { Scanner } from "../scanner.js";
+import { ExecutionContext } from "../../orchestrator/context.js";
+import { RawFinding } from "../../findings/raw.finding.js";
+import { runProcess, checkCommand } from "../../core/process.runner.js";
+import { ScannerError, ScannerUnavailableError } from "../../core/errors.js";
+import { logger } from "../../core/logger.js";
 
 interface TrivyImageResult {
   SchemaVersion: number;
@@ -43,8 +43,7 @@ export class TrivyImageScanner implements Scanner {
     const images = ctx.environment.images;
 
     if (!images || images.length === 0) {
-      logger.warn("No container images to scan");
-      return [];
+      throw new ScannerUnavailableError("No container images configured or detected", this.name);
     }
 
     // Check for native trivy first, then Docker
@@ -52,22 +51,27 @@ export class TrivyImageScanner implements Scanner {
     const hasDocker = await checkCommand("docker");
 
     if (!hasTrivy && !hasDocker) {
-      logger.warn("Neither Trivy nor Docker available, skipping container scan");
-      return [];
+      throw new ScannerUnavailableError(
+        "Neither Trivy nor Docker is available for container scanning",
+        this.name
+      );
     }
 
     if (!hasTrivy && hasDocker) {
       // Check if trivy image is available
       const imageCheck = await runProcess("docker", ["images", "-q", "aquasec/trivy"], { timeout: 10000 });
       if (!imageCheck.stdout.trim()) {
-        logger.warn("Trivy Docker image not found. Pull with: docker pull aquasec/trivy");
-        return [];
+        throw new ScannerUnavailableError(
+          "Trivy Docker image not found. Pull with: docker pull aquasec/trivy",
+          this.name
+        );
       }
       this.useDocker = true;
       logger.info("Using Trivy via Docker for container scanning");
     }
 
     const allFindings: RawFinding[] = [];
+    const failures: string[] = [];
 
     for (const image of images) {
       logger.scanner(this.name, "start", `Scanning image: ${image}`);
@@ -77,8 +81,17 @@ export class TrivyImageScanner implements Scanner {
         allFindings.push(...findings);
         logger.scanner(this.name, "done", `${image}: ${findings.length} issues`);
       } catch (err) {
-        logger.scanner(this.name, "error", `${image}: ${(err as Error).message}`);
+        const message = `${image}: ${(err as Error).message}`;
+        failures.push(message);
+        logger.scanner(this.name, "error", message);
       }
+    }
+
+    if (failures.length === images.length) {
+      throw new ScannerError(
+        `All image scans failed: ${failures.join("; ")}`,
+        this.name
+      );
     }
 
     return allFindings;

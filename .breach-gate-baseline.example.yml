@@ -1,0 +1,9 @@
+version: "1.0"
+findings:
+  # Add accepted findings here after reviewing their risk.
+  # Fingerprints are emitted in JSON reports under policyEvaluation.
+  #
+  # - fingerprint: "0123456789abcdef"
+  #   owner: "team-name"
+  #   reason: "Accepted temporarily while legacy endpoint is replaced."
+  #   expires: "2026-12-31"

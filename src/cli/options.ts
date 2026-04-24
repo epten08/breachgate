@@ -1,11 +1,17 @@
-import { Severity } from "../findings/finding";
+import { Severity } from "../findings/finding.js";
+import { ReportFormat } from "../core/config.loader.js";
 
 export interface ScanOptions {
   config?: string;
+  configs?: string[];
+  workdir?: string;
   target?: string;
   output?: string;
-  format?: ("markdown" | "json")[];
+  format?: ReportFormat[];
   failOn?: Severity;
+  profile?: string;
+  baseline?: string;
+  differential?: boolean;
   verbose?: boolean;
   quiet?: boolean;
   ci?: boolean;  // Deterministic CI mode - minimal output
@@ -32,9 +38,22 @@ export function parseSeverity(value: string): Severity {
 export function parseFormats(value: string, previous: string[] = []): string[] {
   const formats = value.split(",").map((f) => f.trim().toLowerCase());
   for (const format of formats) {
-    if (!["markdown", "json"].includes(format)) {
-      throw new Error(`Invalid format: ${format}. Must be markdown or json`);
+    if (!["markdown", "json", "sarif"].includes(format)) {
+      throw new Error(`Invalid format: ${format}. Must be markdown, json, or sarif`);
     }
   }
   return [...previous, ...formats];
+}
+
+export function parseConfigPaths(value: string, previous: string[] = []): string[] {
+  const paths = value
+    .split(",")
+    .map((path) => path.trim())
+    .filter(Boolean);
+
+  if (paths.length === 0) {
+    throw new Error("At least one config path must be provided");
+  }
+
+  return [...previous, ...paths];
 }

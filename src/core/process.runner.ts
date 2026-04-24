@@ -1,6 +1,6 @@
 import { spawn, SpawnOptions } from "child_process";
-import { ProcessError } from "./errors";
-import { logger } from "./logger";
+import { ProcessError } from "./errors.js";
+import { logger } from "./logger.js";
 
 export interface ProcessResult {
   stdout: string;
@@ -20,7 +20,7 @@ export async function runProcess(
   args: string[],
   options: RunOptions = {}
 ): Promise<ProcessResult> {
-  const { cwd, env, timeout = 300000, shell = true } = options;
+  const { cwd, env, timeout = 300000, shell = false } = options;
 
   logger.debug(`Running: ${command} ${args.join(" ")}`, { cwd });
 

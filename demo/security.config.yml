@@ -1,4 +1,4 @@
-# Security Bot Configuration for Demo Vulnerable API
+# Breach Gate Configuration for Demo Vulnerable API
 # This config demonstrates scanning the intentionally vulnerable API
 
 target:
@@ -81,3 +81,4 @@ reporting:
     - "json"
   outputDir: "./reports"
   includeEvidence: true
+

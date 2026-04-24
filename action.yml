@@ -1,0 +1,77 @@
+name: Breach Gate
+description: Run Breach Gate security scans in GitHub Actions.
+
+inputs:
+  config:
+    description: Path to the Breach Gate YAML config file.
+    required: false
+    default: security.config.yml
+  target:
+    description: Target API URL. Overrides target.baseUrl from the config when set.
+    required: false
+    default: ""
+  output:
+    description: Directory where reports should be written.
+    required: false
+    default: security-reports
+  format:
+    description: Comma-separated report formats.
+    required: false
+    default: json,markdown,sarif
+  scan-args:
+    description: Extra arguments passed to `breach-gate scan`.
+    required: false
+    default: ""
+  working-directory:
+    description: Repository directory to scan.
+    required: false
+    default: .
+  node-version:
+    description: Node.js version used to build the action CLI.
+    required: false
+    default: "20"
+  install-command:
+    description: Command used to install this action's dependencies.
+    required: false
+    default: npm ci
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+        cache-dependency-path: ${{ github.action_path }}/package-lock.json
+
+    - name: Install Breach Gate
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: ${{ inputs.install-command }}
+
+    - name: Build Breach Gate
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm run build
+
+    - name: Run Breach Gate
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        cmd=(node "$GITHUB_ACTION_PATH/dist/cli/index.js" scan --ci)
+        cmd+=(--config "${{ inputs.config }}")
+        cmd+=(--output "${{ inputs.output }}")
+        cmd+=(--format "${{ inputs.format }}")
+
+        if [ -n "${{ inputs.target }}" ]; then
+          cmd+=(--target "${{ inputs.target }}")
+        fi
+
+        if [ -n "${{ inputs.scan-args }}" ]; then
+          read -r -a extra_args <<< "${{ inputs.scan-args }}"
+          cmd+=("${extra_args[@]}")
+        fi
+
+        "${cmd[@]}"
+

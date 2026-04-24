@@ -1,11 +1,14 @@
-import { Scanner } from "../scanner";
-import { ExecutionContext } from "../../orchestrator/context";
-import { RawFinding } from "../../findings/raw.finding";
-import { TestGenerator } from "../../ai/test.generator";
-import { TestExecutor } from "../../ai/executor";
-import { TestEvaluator } from "../../ai/evaluator";
-import { AIConfig } from "../../ai/adversary";
-import { logger } from "../../core/logger";
+import { Scanner } from "../scanner.js";
+import { ExecutionContext } from "../../orchestrator/context.js";
+import { RawFinding } from "../../findings/raw.finding.js";
+import { SecurityTestCase, TestGenerator } from "../../ai/test.generator.js";
+import { TestExecutor } from "../../ai/executor.js";
+import { TestEvaluator } from "../../ai/evaluator.js";
+import { AIConfig } from "../../ai/adversary.js";
+import { logger } from "../../core/logger.js";
+import { ScannerUnavailableError } from "../../core/errors.js";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname } from "path";
 
 export interface AIScannnerConfig {
   provider: "ollama" | "openai" | "anthropic";
@@ -13,6 +16,11 @@ export interface AIScannnerConfig {
   baseUrl?: string;
   apiKey?: string;
   maxTests?: number;
+  deterministic?: boolean;
+  temperature?: number;
+  maxTokens?: number;
+  replayTests?: string;
+  saveTests?: string;
 }
 
 export class AIScanner implements Scanner {
@@ -33,20 +41,34 @@ export class AIScanner implements Scanner {
       model: this.config.model,
       baseUrl: this.config.baseUrl,
       apiKey: this.config.apiKey,
+      temperature: this.config.deterministic ? 0 : this.config.temperature,
+      maxTokens: this.config.maxTokens,
     };
 
-    // Check if AI is available
-    const generator = new TestGenerator(ctx, aiConfig);
-    const isAvailable = await generator.isAvailable();
-
-    if (!isAvailable) {
-      logger.warn(`AI provider ${this.config.provider} not available, using fallback tests`);
-    }
-
     try {
-      // Generate test cases
-      const maxTests = this.config.maxTests || 10;
-      const testCases = await generator.generateTestCases(maxTests);
+      let isAvailable = false;
+      let testCases: SecurityTestCase[];
+
+      if (this.config.replayTests) {
+        testCases = this.loadReplayTests(ctx);
+        logger.debug(`Loaded ${testCases.length} replayed AI test cases`);
+      } else {
+        // Check if AI is available before generating test cases.
+        const generator = new TestGenerator(ctx, aiConfig);
+        isAvailable = await generator.isAvailable();
+
+        if (!isAvailable) {
+          throw new ScannerUnavailableError(
+            `AI provider ${this.config.provider} is not available`,
+            this.name
+          );
+        }
+
+        const maxTests = this.config.maxTests || 10;
+        testCases = await generator.generateTestCases(maxTests);
+        this.saveReplayTests(ctx, testCases);
+      }
+
       logger.debug(`Generated ${testCases.length} test cases`);
 
       if (testCases.length === 0) {
@@ -66,8 +88,65 @@ export class AIScanner implements Scanner {
       logger.scanner(this.name, "done", `Found ${findings.length} issues`);
       return findings;
     } catch (err) {
+      if (err instanceof ScannerUnavailableError) {
+        throw err;
+      }
       logger.scanner(this.name, "error", (err as Error).message);
       return [];
     }
   }
+
+  private loadReplayTests(ctx: ExecutionContext): SecurityTestCase[] {
+    const path = this.resolveReplayPath(ctx, this.config.replayTests!);
+    if (!existsSync(path)) {
+      throw new ScannerUnavailableError(`AI replay artifact not found: ${path}`, this.name);
+    }
+
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as SecurityTestCase[] | {
+      tests?: SecurityTestCase[];
+    };
+    const tests = Array.isArray(parsed) ? parsed : parsed.tests;
+
+    if (!Array.isArray(tests)) {
+      throw new ScannerUnavailableError(`AI replay artifact does not contain a tests array: ${path}`, this.name);
+    }
+
+    return tests.filter((testCase) =>
+      testCase.name &&
+      testCase.endpoint &&
+      testCase.request?.method &&
+      testCase.request?.path
+    );
+  }
+
+  private saveReplayTests(ctx: ExecutionContext, tests: SecurityTestCase[]): void {
+    if (!this.config.saveTests) {
+      return;
+    }
+
+    const path = this.resolveReplayPath(ctx, this.config.saveTests);
+    const dir = dirname(path);
+    if (dir && dir !== ".") {
+      mkdirSync(dir, { recursive: true });
+    }
+
+    writeFileSync(path, JSON.stringify({
+      schemaVersion: "1.0",
+      generatedAt: new Date().toISOString(),
+      targetUrl: ctx.targetUrl,
+      role: ctx.auth?.role,
+      deterministic: this.config.deterministic === true,
+      tests,
+    }, null, 2), "utf-8");
+    logger.info(`Saved AI replay artifact: ${path}`);
+  }
+
+  private resolveReplayPath(ctx: ExecutionContext, path: string): string {
+    const role = sanitizeRole(ctx.auth?.role || "anonymous");
+    return path.replace(/\{role\}/g, role);
+  }
+}
+
+function sanitizeRole(role: string): string {
+  return role.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || "role";
 }

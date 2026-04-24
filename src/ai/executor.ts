@@ -1,6 +1,14 @@
-import { SecurityTestCase } from "./test.generator";
-import { ExecutionContext } from "../orchestrator/context";
-import { logger } from "../core/logger";
+import { SecurityTestCase } from "./test.generator.js";
+import { ExecutionContext } from "../orchestrator/context.js";
+import { logger } from "../core/logger.js";
+import { buildAuthHeaders } from "../auth/auth.js";
+import {
+  allowsDestructiveMethod,
+  isPathExcluded,
+  isUrlInScope,
+  requestDelayMs,
+} from "../safety/safety.js";
+import { sleep } from "../utils/network.js";
 
 export interface TestResult {
   testCase: SecurityTestCase;
@@ -17,6 +25,7 @@ export interface TestResult {
 export class TestExecutor {
   private ctx: ExecutionContext;
   private timeout: number;
+  private lastRequestAt = 0;
 
   constructor(ctx: ExecutionContext, timeout: number = 10000) {
     this.ctx = ctx;
@@ -30,6 +39,13 @@ export class TestExecutor {
       logger.debug(`Executing: ${testCase.name}`);
 
       try {
+        const skipReason = this.getSkipReason(testCase);
+        if (skipReason) {
+          logger.debug(`Skipping: ${testCase.name} - ${skipReason}`);
+          continue;
+        }
+
+        await this.applyThrottle();
         const result = await this.executeTest(testCase);
         results.push(result);
 
@@ -55,12 +71,8 @@ export class TestExecutor {
       "Content-Type": "application/json",
       "User-Agent": "SecurityBot/1.0",
       ...testCase.request.headers,
+      ...buildAuthHeaders(this.ctx.auth),
     };
-
-    // Add auth if configured
-    if (this.ctx.auth) {
-      this.addAuthHeaders(headers);
-    }
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
@@ -74,6 +86,7 @@ export class TestExecutor {
           : undefined,
         signal: controller.signal,
       });
+      this.lastRequestAt = Date.now();
 
       clearTimeout(timeoutId);
 
@@ -102,24 +115,6 @@ export class TestExecutor {
     } catch (err) {
       clearTimeout(timeoutId);
       throw err;
-    }
-  }
-
-  private addAuthHeaders(headers: Record<string, string>): void {
-    if (!this.ctx.auth) return;
-
-    switch (this.ctx.auth.type) {
-      case "jwt":
-        if (this.ctx.auth.token) {
-          headers["Authorization"] = `Bearer ${this.ctx.auth.token}`;
-        }
-        break;
-      case "apikey":
-        if (this.ctx.auth.apiKey) {
-          const headerName = this.ctx.auth.headerName || "X-API-Key";
-          headers[headerName] = this.ctx.auth.apiKey;
-        }
-        break;
     }
   }
 
@@ -213,5 +208,36 @@ export class TestExecutor {
     };
 
     return severityMap[category] || "MEDIUM";
+  }
+
+  private getSkipReason(testCase: SecurityTestCase): string | undefined {
+    const url = new URL(testCase.request.path, this.ctx.targetUrl);
+    const safety = this.ctx.config.safety;
+
+    if (!isUrlInScope(url, this.ctx.targetUrl, safety)) {
+      return `URL ${url.hostname} is outside configured scope`;
+    }
+
+    if (isPathExcluded(url.pathname, safety)) {
+      return `path ${url.pathname} is excluded by safety.excludedPaths`;
+    }
+
+    if (!allowsDestructiveMethod(testCase.request.method, safety)) {
+      return `method ${testCase.request.method.toUpperCase()} is blocked by safety profile`;
+    }
+
+    return undefined;
+  }
+
+  private async applyThrottle(): Promise<void> {
+    const delay = requestDelayMs(this.ctx.config.safety);
+    if (delay <= 0 || this.lastRequestAt === 0) {
+      return;
+    }
+
+    const elapsed = Date.now() - this.lastRequestAt;
+    if (elapsed < delay) {
+      await sleep(delay - elapsed);
+    }
   }
 }

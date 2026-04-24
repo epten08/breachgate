@@ -3,6 +3,7 @@ export interface RawFinding {
   category: string;
   description: string;
   endpoint?: string;
+  role?: string;
   severityHint?: string;
   evidence?: string;
   cve?: string;

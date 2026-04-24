@@ -1,10 +1,16 @@
-import { Scanner } from "../scanner";
-import { ExecutionContext } from "../../orchestrator/context";
-import { RawFinding } from "../../findings/raw.finding";
-import { runProcess, checkCommand } from "../../core/process.runner";
-import { ScannerError } from "../../core/errors";
-import { logger } from "../../core/logger";
-import { sleep } from "../../utils/network";
+import { Scanner } from "../scanner.js";
+import { ExecutionContext } from "../../orchestrator/context.js";
+import { RawFinding } from "../../findings/raw.finding.js";
+import { runProcess, checkCommand } from "../../core/process.runner.js";
+import { ScannerError, ScannerUnavailableError } from "../../core/errors.js";
+import { logger } from "../../core/logger.js";
+import { sleep } from "../../utils/network.js";
+import { buildAuthHeaders } from "../../auth/auth.js";
+import {
+  allowsDestructiveMethod,
+  isPathExcluded,
+  shouldRunZapActiveScan,
+} from "../../safety/safety.js";
 
 interface ZapAlert {
   pluginid: string;
@@ -53,8 +59,10 @@ export class ZapApiScanner implements Scanner {
 
     const zapMode = await this.checkZapAvailable();
     if (zapMode === "none") {
-      logger.warn("ZAP not available, skipping dynamic scan");
-      return [];
+      throw new ScannerUnavailableError(
+        "OWASP ZAP is not running and no ZAP Docker image or CLI command is available",
+        this.name
+      );
     }
 
     this.useDocker = zapMode === "docker";
@@ -236,7 +244,7 @@ export class ZapApiScanner implements Scanner {
       runProcess(
         zapCmd,
         ["-daemon", "-port", String(this.zapPort), "-config", "api.disablekey=true"],
-        { timeout: 10000 }
+        { timeout: 10000, shell: process.platform === "win32" }
       ).catch(() => {});
 
       this.zapProcess = true;
@@ -273,15 +281,30 @@ export class ZapApiScanner implements Scanner {
       logger.info(`ZAP Docker scanning: ${targetUrl}`);
     }
 
-    // Access the base URL first
-    await this.zapRequest("/JSON/core/action/accessUrl/", {
-      url: targetUrl,
-    });
+    const authHeaders = buildAuthHeaders(ctx.auth);
 
-    // If we have configured endpoints, add them to ZAP for scanning
-    if (ctx.endpoints && ctx.endpoints.length > 0) {
-      logger.info(`Adding ${ctx.endpoints.length} configured endpoints to ZAP`);
-      for (const endpoint of ctx.endpoints) {
+    // Access the base URL first, carrying configured auth where possible.
+    await this.sendRequestViaZap("GET", targetUrl, authHeaders);
+
+    const scopedEndpoints = (ctx.endpoints && ctx.endpoints.length > 0
+      ? ctx.endpoints
+      : this.extractOpenApiEndpoints(ctx))
+      .filter((endpoint) => {
+        if (isPathExcluded(endpoint.path, ctx.config.safety)) {
+          logger.debug(`Skipping ZAP endpoint ${endpoint.path}: excluded by safety profile`);
+          return false;
+        }
+        if (endpoint.method && !allowsDestructiveMethod(endpoint.method, ctx.config.safety)) {
+          logger.debug(`Skipping ZAP endpoint ${endpoint.method} ${endpoint.path}: method blocked by safety profile`);
+          return false;
+        }
+        return true;
+      });
+
+    // If we have configured or OpenAPI endpoints, add them to ZAP for scanning
+    if (scopedEndpoints.length > 0) {
+      logger.info(`Adding ${scopedEndpoints.length} scoped endpoints to ZAP`);
+      for (const endpoint of scopedEndpoints) {
         const endpointUrl = `${targetUrl}${endpoint.path}`;
 
         // Add query parameters if any
@@ -292,19 +315,13 @@ export class ZapApiScanner implements Scanner {
           }
         }
 
-        // Access each endpoint so ZAP knows about it
-        if (endpoint.method === "GET" || !endpoint.method) {
-          await this.zapRequest("/JSON/core/action/accessUrl/", {
-            url: urlWithParams.toString(),
-          });
-        } else {
-          // For POST/PUT/etc, use requestor to send the request through ZAP
-          const bodyStr = endpoint.body ? JSON.stringify(endpoint.body) : "";
-          await this.zapRequest("/JSON/core/action/sendRequest/", {
-            request: `${endpoint.method} ${urlWithParams.pathname}${urlWithParams.search} HTTP/1.1\nHost: ${urlWithParams.host}\nContent-Type: application/json\n\n${bodyStr}`,
-            followRedirects: "true",
-          });
-        }
+        const bodyStr = endpoint.body ? JSON.stringify(endpoint.body) : "";
+        await this.sendRequestViaZap(
+          endpoint.method || "GET",
+          urlWithParams.toString(),
+          authHeaders,
+          bodyStr
+        );
       }
     }
 
@@ -321,27 +338,32 @@ export class ZapApiScanner implements Scanner {
       await this.waitForScan("spider", spiderId);
     }
 
-    // Run active scan on all discovered URLs
-    logger.info("Running active scan...");
-    const scanResponse = await this.zapRequest("/JSON/ascan/action/scan/", {
-      url: targetUrl,
-      recurse: "true",
-      scanPolicyName: "Default Policy",
-    });
+    if (shouldRunZapActiveScan(ctx.config.safety)) {
+      // Run active scan on all discovered URLs only for the full-active profile.
+      logger.info("Running active scan...");
+      const scanResponse = await this.zapRequest("/JSON/ascan/action/scan/", {
+        url: targetUrl,
+        recurse: "true",
+        scanPolicyName: "Default Policy",
+      });
 
-    const scanId = scanResponse?.scan as string;
-    if (scanId) {
-      await this.waitForScan("ascan", scanId, 300000);
+      const scanId = scanResponse?.scan as string;
+      if (scanId) {
+        await this.waitForScan("ascan", scanId, 300000);
+      }
+    } else {
+      logger.info("Skipping ZAP active scan; set safety.profile: full-active to enable it");
     }
 
     const alertsResponse = await this.zapRequest("/JSON/core/view/alerts/", {
       baseurl: targetUrl,
     });
 
-    const alerts = (alertsResponse?.alerts || []) as ZapAlert[];
+    const alerts = ((alertsResponse?.alerts || []) as ZapAlert[])
+      .filter((alert) => !this.isAlertExcluded(alert, ctx));
     logger.info(`ZAP found ${alerts.length} alerts`);
 
-    return this.parseAlerts(alerts);
+    return this.parseAlerts(alerts, ctx.auth?.role);
   }
 
   private async zapRequest(path: string, params?: Record<string, string>): Promise<Record<string, unknown>> {
@@ -357,6 +379,43 @@ export class ZapApiScanner implements Scanner {
       logger.debug(`ZAP request failed: ${(err as Error).message}`);
       return {};
     }
+  }
+
+  private async sendRequestViaZap(
+    method: string,
+    url: string,
+    headers: Record<string, string>,
+    body = ""
+  ): Promise<void> {
+    await this.zapRequest("/JSON/core/action/sendRequest/", {
+      request: this.buildRawHttpRequest(method, url, headers, body),
+      followRedirects: "true",
+    });
+  }
+
+  private buildRawHttpRequest(
+    method: string,
+    url: string,
+    headers: Record<string, string>,
+    body: string
+  ): string {
+    const parsed = new URL(url);
+    const requestHeaders: Record<string, string> = {
+      Host: parsed.host,
+      "User-Agent": "SecurityBot/1.0",
+      ...headers,
+    };
+
+    if (body) {
+      requestHeaders["Content-Type"] = requestHeaders["Content-Type"] || "application/json";
+      requestHeaders["Content-Length"] = Buffer.byteLength(body).toString();
+    }
+
+    const headerLines = Object.entries(requestHeaders)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join("\n");
+
+    return `${method.toUpperCase()} ${parsed.pathname}${parsed.search} HTTP/1.1\n${headerLines}\n\n${body}`;
   }
 
   private async waitForScan(
@@ -381,17 +440,65 @@ export class ZapApiScanner implements Scanner {
     logger.warn(`${scanType} timed out`);
   }
 
-  private parseAlerts(alerts: ZapAlert[]): RawFinding[] {
+  private parseAlerts(alerts: ZapAlert[], role?: string): RawFinding[] {
     return alerts.map((alert) => ({
       source: this.name,
       category: this.mapCategory(alert.name),
       description: alert.desc?.replace(/<[^>]*>/g, "") || alert.name,
       endpoint: `${alert.method} ${alert.uri}`,
+      role,
       severityHint: RISK_MAP[alert.riskcode] || "LOW",
       evidence: alert.evidence || alert.attack,
       cwe: alert.cweid ? `CWE-${alert.cweid}` : undefined,
       reference: alert.reference,
     }));
+  }
+
+  private isAlertExcluded(alert: ZapAlert, ctx: ExecutionContext): boolean {
+    try {
+      const url = new URL(alert.uri);
+      return isPathExcluded(url.pathname, ctx.config.safety);
+    } catch {
+      return false;
+    }
+  }
+
+  private extractOpenApiEndpoints(ctx: ExecutionContext): Array<{
+    path: string;
+    method?: string;
+    params?: Record<string, string>;
+    body?: Record<string, unknown>;
+  }> {
+    if (!ctx.openApi?.paths) {
+      return [];
+    }
+
+    const methods = new Set(["get", "post", "put", "patch", "delete"]);
+    const endpoints: Array<{
+      path: string;
+      method?: string;
+      params?: Record<string, string>;
+      body?: Record<string, unknown>;
+    }> = [];
+
+    for (const [path, pathItem] of Object.entries(ctx.openApi.paths)) {
+      if (!pathItem || typeof pathItem !== "object") {
+        continue;
+      }
+
+      for (const [method] of Object.entries(pathItem)) {
+        if (!methods.has(method)) {
+          continue;
+        }
+
+        endpoints.push({
+          path,
+          method: method.toUpperCase(),
+        });
+      }
+    }
+
+    return endpoints;
   }
 
   private mapCategory(alertName: string): string {

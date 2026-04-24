@@ -1,9 +1,9 @@
-import { runProcess, checkCommand } from "../core/process.runner";
-import { EnvironmentError } from "../core/errors";
-import { logger } from "../core/logger";
-import { SecurityBotConfig } from "../core/config.loader";
-import { waitForHealthy, detectApiUrl } from "../utils/network";
-import { fileExists, readYaml } from "../utils/fs";
+import { runProcess, checkCommand } from "../core/process.runner.js";
+import { EnvironmentError } from "../core/errors.js";
+import { logger } from "../core/logger.js";
+import { SecurityBotConfig } from "../core/config.loader.js";
+import { waitForHealthy, detectApiUrl } from "../utils/network.js";
+import { fileExists, readYaml } from "../utils/fs.js";
 
 export interface EnvironmentInfo {
   baseUrl: string;

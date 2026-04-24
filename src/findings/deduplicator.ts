@@ -1,5 +1,5 @@
-import { Finding, FindingGroup, SEVERITY_WEIGHTS } from "./finding";
-import { logger } from "../core/logger";
+import { Finding, FindingGroup, SEVERITY_WEIGHTS } from "./finding.js";
+import { logger } from "../core/logger.js";
 
 export interface DeduplicationOptions {
   similarityThreshold?: number;
@@ -62,6 +62,10 @@ export class Deduplicator {
   }
 
   private areSimilar(a: Finding, b: Finding): boolean {
+    if (a.role && b.role && a.role !== b.role) {
+      return false;
+    }
+
     // Exact CVE match
     if (a.cve && b.cve && a.cve === b.cve) {
       return true;

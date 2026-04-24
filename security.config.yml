@@ -50,9 +50,28 @@ auth:
   type: none
   # type: jwt
   # token: ${JWT_TOKEN}
+  # preScan:
+  #   command: node
+  #   args: ["scripts/get-ci-token.js"]
+  #   output: json
+  #   tokenField: accessToken
+  #   headersField: headers
   # type: apikey
   # apiKey: ${API_KEY}
   # headerName: X-API-Key
+  # Multi-role scans run dynamic and AI checks once per role.
+  # roles:
+  #   - name: anonymous
+  #     type: none
+  #   - name: user
+  #     type: jwt
+  #     token: ${USER_JWT}
+  #   - name: admin
+  #     type: session
+  #     cookieName: sid
+  #     cookieValue: ${ADMIN_SESSION_COOKIE}
+  #     headers:
+  #       X-Tenant: ci
 
 scanners:
   static:
@@ -80,14 +99,39 @@ scanners:
     model: llama3:8b
     baseUrl: http://localhost:11434
     maxTests: 15
+    deterministic: true
+    # Save generated AI test cases for replayable CI failures.
+    # saveTests: ./security-reports/ai-tests-{role}.json
+    # replayTests: ./security-reports/ai-tests-user.json
 
 thresholds:
   failOn: HIGH      # Exit with error if findings at this level or above
   warnOn: MEDIUM    # Show warnings for findings at this level
+
+safety:
+  # passive: no active AI tests and no ZAP active scan
+  # safe-active: authenticated seeding, passive ZAP alerts, guarded AI requests
+  # full-active: enables ZAP active scan and destructive methods
+  profile: safe-active
+  allowProductionTargets: false
+  allowedHosts:
+    - localhost
+    - 127.0.0.1
+  excludedPaths:
+    - /admin/delete*
+  maxRequestsPerSecond: 2
+  allowDestructiveMethods: false
+
+policy:
+  profile: main     # pull-request | main | release | nightly
+  # baselinePath: ./.breach-gate-baseline.yml
+  # differentialOnly: true
 
 reporting:
   outputDir: ./security-reports
   formats:
     - markdown
     - json
+    - sarif
   includeEvidence: true
+

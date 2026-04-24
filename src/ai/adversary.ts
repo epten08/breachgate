@@ -1,5 +1,5 @@
-import { AIError } from "../core/errors";
-import { logger } from "../core/logger";
+import { AIError } from "../core/errors.js";
+import { logger } from "../core/logger.js";
 
 export type AIProvider = "ollama" | "openai" | "anthropic";
 

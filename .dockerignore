@@ -1,0 +1,11 @@
+.git
+.github
+.claude
+node_modules
+dist
+security-reports
+test-output
+test-ci-reports
+.env
+nul
+npm-debug.log*

@@ -1,10 +1,10 @@
-import { AIClient, AIConfig } from "./adversary";
-import { PromptBuilder } from "./prompt.builder";
-import { TestResult } from "./executor";
-import { SecurityTestCase } from "./test.generator";
-import { ExecutionContext } from "../orchestrator/context";
-import { RawFinding } from "../findings/raw.finding";
-import { logger } from "../core/logger";
+import { AIClient, AIConfig } from "./adversary.js";
+import { PromptBuilder } from "./prompt.builder.js";
+import { TestResult } from "./executor.js";
+import { SecurityTestCase } from "./test.generator.js";
+import { ExecutionContext } from "../orchestrator/context.js";
+import { RawFinding } from "../findings/raw.finding.js";
+import { logger } from "../core/logger.js";
 
 export interface VulnerabilityAssessment {
   isVulnerable: boolean;
@@ -21,8 +21,10 @@ export class TestEvaluator {
   private client: AIClient;
   private promptBuilder: PromptBuilder;
   private useAI: boolean;
+  private ctx: ExecutionContext;
 
   constructor(ctx: ExecutionContext, aiConfig?: AIConfig) {
+    this.ctx = ctx;
     this.promptBuilder = new PromptBuilder(ctx);
 
     if (aiConfig) {
@@ -56,6 +58,7 @@ export class TestEvaluator {
           category: assessment.vulnerability.type,
           description: `${result.testCase.name}: ${result.testCase.description}`,
           endpoint: result.testCase.endpoint,
+          role: this.ctx.auth?.role,
           severityHint: assessment.vulnerability.severity,
           evidence: assessment.vulnerability.evidence,
           reference: assessment.vulnerability.recommendation,

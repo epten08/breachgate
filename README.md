@@ -1,4 +1,4 @@
-# Security Bot
+# Breach Gate
 
 **Attack Feasibility Analyzer** - CLI-based automated security analysis tool for REST APIs. Goes beyond vulnerability detection to answer the key question: **"Is it safe to deploy?"**
 
@@ -8,9 +8,9 @@ Combines static analysis, container scanning, dynamic API testing, and AI-assist
 
 Most security scanners answer: *"What vulnerabilities exist?"*
 
-Security Bot answers: **"Can an attacker actually compromise the system?"**
+Breach Gate answers: **"Can an attacker actually compromise the system?"**
 
-| Traditional Scanner | Security Bot |
+| Traditional Scanner | Breach Gate |
 |---------------------|--------------|
 | Lists vulnerabilities | Analyzes attack feasibility |
 | Severity-based sorting | Risk = Impact × Exploitability × Reachability × Confidence |
@@ -26,6 +26,7 @@ Security Bot answers: **"Can an attacker actually compromise the system?"**
 - **Endpoint Correlation** - Groups findings by attack surface area
 - **Contextual Remediation** - Specific fixes with code examples, not generic advice
 - **Multi-Scanner Integration** - Trivy (SAST), ZAP (DAST), Container scanning, AI behavioral testing
+- **CI Auth And Safety** - Short-lived auth hooks, multi-role scans, session cookies, AI replay artifacts, and active-scan guardrails
 
 ## Quick Start
 
@@ -125,12 +126,77 @@ sudo apt-get update && sudo apt-get install trivy
 curl -fsSL https://ollama.ai/install.sh | sh
 ```
 
-## Installation
+## Developer Setup
+
+Use this path if you are cloning the repository to develop Breach Gate itself.
+
+### 1. Install dependencies
 
 ```bash
 npm install
+```
+
+Node.js 20 is the easiest target because it matches the repository CI and release workflows.
+
+### 2. Add local environment values
+
+If you need cloud AI providers or protected API credentials locally, create a `.env` from `.env.example` and add only the values you need.
+
+Common variables:
+
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+- `JWT_TOKEN`
+- `API_KEY`
+- `ZAP_API_KEY`
+
+### 3. Verify the repository
+
+```bash
+npm run typecheck
+npm test
+npm run test:cli
 npm run build
 ```
+
+Or run the main local verification path in one command:
+
+```bash
+npm run test:all
+```
+
+### 4. Bootstrap a starter config
+
+```bash
+npm run dev -- init --baseline --ci-provider github
+```
+
+That creates:
+
+- `security.config.yml`
+- `.breach-gate-baseline.yml`
+- `.github/workflows/breach-gate.yml`
+
+### 5. Validate local prerequisites
+
+```bash
+npm run dev -- doctor --config security.config.yml
+```
+
+Use `--ci` when you want to confirm that the enabled scanners and target are suitable for pipeline execution.
+
+### Common Developer Commands
+
+| Command | Purpose |
+|--------|---------|
+| `npm run dev -- scan ...` | Run the CLI from source with `tsx` |
+| `npm run scan -- ...` | Shortcut for `scan` during local development |
+| `npm run demo` | Start the intentionally vulnerable demo API |
+| `npm run typecheck` | TypeScript validation |
+| `npm test` | Integration tests |
+| `npm run test:cli` | CLI exit-code, schema, and multi-config tests |
+| `npm run build` | Compile the CLI into `dist/` |
+| `npm run sbom -- sbom.cdx.json` | Generate a CycloneDX SBOM for the package |
 
 ## Usage
 
@@ -152,7 +218,7 @@ npx tsx src/cli/index.ts scan [options]
 Run attack feasibility analysis against a target API.
 
 ```bash
-sec-bot scan [options]
+breach-gate scan [options]
 ```
 
 **Options:**
@@ -160,10 +226,15 @@ sec-bot scan [options]
 | Option | Description |
 |--------|-------------|
 | `-c, --config <path>` | Path to config file (default: `security.config.yml`) |
+| `--configs <paths>` | Comma-separated config files for monorepo or multi-service scans |
+| `--workdir <path>` | Working directory used to resolve config, compose, report, and scanner paths |
 | `-t, --target <url>` | Target URL (overrides config) |
 | `-o, --output <dir>` | Output directory for reports |
-| `-f, --format <formats>` | Output formats, comma-separated: `markdown`, `json` |
+| `-f, --format <formats>` | Output formats, comma-separated: `markdown`, `json`, `sarif` |
 | `--fail-on <severity>` | Legacy: fail on severity (now uses attack feasibility) |
+| `--profile <name>` | Policy profile: `pull-request`, `main`, `release`, `nightly` |
+| `--baseline <path>` | Path to baseline/ignore file |
+| `--differential` | Fail only on findings not covered by the baseline |
 | `-v, --verbose` | Enable verbose output with attack chains and remediations |
 | `-q, --quiet` | Suppress non-essential output |
 | `--ci` | **CI mode** - minimal, deterministic output for pipelines |
@@ -173,26 +244,82 @@ sec-bot scan [options]
 | `--skip-ai` | Skip AI-assisted behavioral testing |
 | `-h, --help` | Display help |
 
+#### `init`
+
+Create starter configuration and optional baseline/CI files.
+
+```bash
+breach-gate init --baseline --ci-provider github
+```
+
+#### `doctor`
+
+Check local or CI prerequisites.
+
+```bash
+breach-gate doctor --ci --config security.config.yml
+```
+
 ### Examples
 
 ```bash
 # Full attack feasibility analysis
-sec-bot scan -t http://localhost:3000 -v
+breach-gate scan -t http://localhost:3000 -v
 
 # Quick scan (static + container only)
-sec-bot scan -t http://localhost:3000 --skip-dynamic --skip-ai
+breach-gate scan -t http://localhost:3000 --skip-dynamic --skip-ai
 
 # AI-focused testing
-sec-bot scan -t http://localhost:3000 --skip-static --skip-container -v
+breach-gate scan -t http://localhost:3000 --skip-static --skip-container -v
 
 # Output reports for CI/CD integration
-sec-bot scan -t http://localhost:3000 -f json,markdown -o ./reports
+breach-gate scan -t http://localhost:3000 -f json,markdown -o ./reports
 
 # CI mode - minimal, deterministic output
-sec-bot scan -t http://localhost:3000 --ci
+breach-gate scan -t http://localhost:3000 --ci
 # Output:
 # SECURITY STATUS: PASSED|FAILED|INCONCLUSIVE
 # Reason: <one-line reason>
+
+# Monorepo scan across multiple service configs
+breach-gate scan --ci --configs services/api/security.config.yml,services/admin/security.config.yml --output ./security-reports
+
+# Run from a service directory without cd-ing into it
+breach-gate scan --ci --workdir services/api --config security.config.yml
+```
+
+## Local Development Workflow
+
+### Run the demo target
+
+Start the vulnerable API in one terminal:
+
+```bash
+npm run demo
+```
+
+Run Breach Gate against it from another terminal:
+
+```bash
+npm run scan -- -t http://127.0.0.1:3000 -v
+```
+
+If you want to use the demo-specific config file instead of the repository root config:
+
+```bash
+npm run dev -- scan --workdir demo --config security.config.yml
+```
+
+### Work on one service in a monorepo
+
+```bash
+npm run dev -- scan --workdir services/payments --config security.config.yml --ci
+```
+
+### Scan multiple service configs in one run
+
+```bash
+npm run dev -- scan --ci --configs services/api/security.config.yml,services/admin/security.config.yml --output ./security-reports
 ```
 
 ### Exit Codes
@@ -209,7 +336,7 @@ sec-bot scan -t http://localhost:3000 --ci
 
 ## How Attack Feasibility Works
 
-Traditional scanners use simple severity (LOW/MEDIUM/HIGH/CRITICAL). Security Bot uses **multiplicative risk scoring**:
+Traditional scanners use simple severity (LOW/MEDIUM/HIGH/CRITICAL). Breach Gate uses **multiplicative risk scoring**:
 
 ```
 risk = impact × exploitability × reachability × confidence
@@ -342,11 +469,17 @@ thresholds:
   failOn: HIGH
   warnOn: MEDIUM
 
+policy:
+  profile: main
+  # baselinePath: ./.breach-gate-baseline.yml
+  # differentialOnly: true
+
 reporting:
   outputDir: ./security-reports
   formats:
     - markdown
     - json
+    - sarif
   includeEvidence: true
 ```
 
@@ -412,7 +545,7 @@ Demo vulnerabilities:
 ## Project Structure
 
 ```
-sec-bot/
+breach-gate/
 ├── src/
 │   ├── cli/           # CLI commands and options
 │   ├── core/          # Config loader, logger, process runner
@@ -428,33 +561,132 @@ sec-bot/
 └── security.config.yml
 ```
 
+## Deploying Breach Gate
+
+There are two common deployment stories:
+
+1. deploy Breach Gate into another repository or CI/CD pipeline
+2. publish a new Breach Gate release for other teams to consume
+
+### Use Breach Gate in another project
+
+You can deploy it into a target pipeline in three main ways.
+
+#### Option 1: npm package
+
+```bash
+npx breach-gate@1.0.0 scan --ci --config security.config.yml --profile main --format json,markdown,sarif --output security-reports
+```
+
+Use this when the pipeline already has Node available.
+
+#### Option 2: Docker image
+
+```bash
+docker run --rm \
+  -v "$PWD:/workspace" \
+  -w /workspace \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  ghcr.io/OWNER/breach-gate:1.0.0 \
+  scan --ci --config security.config.yml --profile main --format json,markdown,sarif --output security-reports
+```
+
+Use this when you want a pinned runtime with the CLI and Trivy already present.
+
+#### Option 3: GitHub Action
+
+```yaml
+- name: Run Breach Gate
+  uses: OWNER/breach-gate@v1
+  with:
+    config: security.config.yml
+    target: ${{ vars.STAGING_API_URL }}
+    output: security-reports
+    format: json,markdown,sarif
+    scan-args: --profile main
+```
+
+Use this when you want the shortest GitHub Actions setup path.
+
+### Release a new Breach Gate version
+
+For maintainers, the release flow is:
+
+```bash
+npm install
+npm run test:all
+npm audit --omit=dev
+npm run sbom -- sbom.cdx.json
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+Pushing a semantic version tag triggers `.github/workflows/release.yml`, which verifies the package and publishes:
+
+- the npm package
+- the GHCR container image
+- the CycloneDX SBOM artifact
+- npm provenance
+- container provenance and SBOM attestations
+
+Manual dry runs are also available through the `workflow_dispatch` input on the release workflow.
+
+### Repository CI
+
+The repository CI workflow lives at `.github/workflows/ci.yml` and runs:
+
+- `npm run typecheck`
+- `npm test`
+- `npm run test:cli`
+- `npm run build`
+- `npm audit --omit=dev`
+- `npm run sbom -- security-reports/sbom.cdx.json`
+- `npm pack --dry-run`
+- a demo API scan smoke test
+
 ## CI/CD Integration
+
+First-party CI/CD examples are available in:
+
+- [Repository release publishing](docs/ci/releasing.md)
+- [GitHub Actions](docs/ci/github-actions.md)
+- [GitLab CI](docs/ci/gitlab-ci.md)
+- [Azure Pipelines](docs/ci/azure-pipelines.md)
+- [Policy profiles and baselines](docs/ci/policy.md)
+- [Auth, AI replay, and safety profiles](docs/ci/auth-and-safety.md)
+- [Code scanning and PR feedback](docs/ci/code-scanning.md)
 
 ```yaml
 # GitHub Actions example
-- name: Security Analysis
-  run: npm run scan -- -t ${{ env.API_URL }} -f json -o ./reports
+- name: Run Breach Gate
+  uses: OWNER/breach-gate@v1
+  with:
+    config: security.config.yml
+    target: ${{ vars.STAGING_API_URL }}
+    output: security-reports
+    format: json,markdown,sarif
+    scan-args: --profile main
 
-- name: Check Verdict
-  run: |
-    if [ $? -eq 1 ]; then
-      echo "::error::Deployment blocked - confirmed exploits detected"
-      exit 1
-    fi
+- name: Upload security reports
+  uses: actions/upload-artifact@v4
+  if: always()
+  with:
+    name: security-reports
+    path: security-reports/
 ```
 
 ## Troubleshooting
 
 ### "Trivy not found"
-Security Bot can use Trivy via Docker. Ensure Docker is running, or:
+Breach Gate can use Trivy via Docker. Ensure Docker is running, or:
 ```bash
-sec-bot scan --skip-static --skip-container
+breach-gate scan --skip-static --skip-container
 ```
 
 ### "ZAP not found"
-Security Bot can use ZAP via Docker (`ghcr.io/zaproxy/zaproxy`). Or:
+Breach Gate can use ZAP via Docker (`ghcr.io/zaproxy/zaproxy`). Or:
 ```bash
-sec-bot scan --skip-dynamic
+breach-gate scan --skip-dynamic
 ```
 
 ### "Ollama connection refused"
@@ -463,15 +695,16 @@ ollama serve  # Start the server first
 ```
 Or skip AI testing:
 ```bash
-sec-bot scan --skip-ai
+breach-gate scan --skip-ai
 ```
 
 ### Low-confidence findings
 Run with AI enabled - it provides the highest confidence through behavioral testing:
 ```bash
-sec-bot scan -t http://localhost:3000 -v
+breach-gate scan -t http://localhost:3000 -v
 ```
 
 ## License
 
 MIT
+

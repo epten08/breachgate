@@ -1,8 +1,8 @@
 import chalk from "chalk";
-import { Finding, Severity } from "../findings/finding";
-import { sortByRisk } from "../findings/normalizer";
-import { RiskEngine } from "../findings/risk.engine";
-import { AttackAnalyzer, SecurityVerdict } from "../findings/attack.analyzer";
+import { Finding, Severity } from "../findings/finding.js";
+import { sortByRisk } from "../findings/normalizer.js";
+import { RiskEngine } from "../findings/risk.engine.js";
+import { AttackAnalyzer, SecurityVerdict } from "../findings/attack.analyzer.js";
 
 export interface CliSummaryOptions {
   maxFindings?: number;

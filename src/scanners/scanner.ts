@@ -1,5 +1,5 @@
-import { ExecutionContext } from "../orchestrator/context";
-import { RawFinding } from "../findings/raw.finding";
+import { ExecutionContext } from "../orchestrator/context.js";
+import { RawFinding } from "../findings/raw.finding.js";
 
 export type ScannerCategory =
   | "static"
