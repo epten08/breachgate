@@ -19,6 +19,7 @@ export interface ScanOptions {
   skipContainer?: boolean;
   skipDynamic?: boolean;
   skipAi?: boolean;
+  explainVerdict?: boolean;
 }
 
 export interface GlobalOptions {

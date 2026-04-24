@@ -1,0 +1,383 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Breach Gate Security Configuration",
+  "description": "Configuration schema for security.config.yml",
+  "type": "object",
+  "required": ["version", "target"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Config schema version",
+      "enum": ["1.0", "1.0.0"]
+    },
+    "target": {
+      "type": "object",
+      "description": "The API target to scan",
+      "additionalProperties": false,
+      "properties": {
+        "baseUrl": {
+          "type": "string",
+          "description": "Base URL of the target API (e.g. http://localhost:3000)"
+        },
+        "dockerCompose": {
+          "type": "string",
+          "description": "Path to docker-compose.yml — Breach Gate will start and stop it automatically"
+        },
+        "openApiSpec": {
+          "type": "string",
+          "description": "Path to OpenAPI spec file (.json or .yaml) for endpoint discovery"
+        },
+        "healthEndpoint": {
+          "type": "string",
+          "description": "Health check endpoint path (default: /health)",
+          "default": "/health"
+        },
+        "healthTimeout": {
+          "type": "integer",
+          "description": "Seconds to wait for target to become healthy (default: 30)",
+          "minimum": 1,
+          "default": 30
+        },
+        "endpoints": {
+          "type": "array",
+          "description": "Manual endpoint list (used when no OpenAPI spec is available)",
+          "items": {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string", "description": "Endpoint path (e.g. /api/users)" },
+              "method": {
+                "type": "string",
+                "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+                "default": "GET"
+              },
+              "description": { "type": "string" },
+              "params": {
+                "type": "object",
+                "description": "Path parameter examples",
+                "additionalProperties": { "type": "string" }
+              },
+              "body": {
+                "type": "object",
+                "description": "Example request body for POST/PUT/PATCH"
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "description": "Authentication configuration",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["none", "jwt", "apikey", "session"],
+          "description": "Primary auth type"
+        },
+        "role": { "type": "string", "description": "Role name for this auth context" },
+        "token": { "type": "string", "description": "JWT token (supports ${ENV_VAR} interpolation)" },
+        "apiKey": { "type": "string", "description": "API key value" },
+        "headerName": { "type": "string", "description": "Header name for API key (default: X-API-Key)", "default": "X-API-Key" },
+        "cookieName": { "type": "string", "description": "Cookie name for session auth" },
+        "cookieValue": { "type": "string", "description": "Cookie value for session auth" },
+        "headers": {
+          "type": "object",
+          "description": "Additional headers to include with every request",
+          "additionalProperties": { "type": "string" }
+        },
+        "preScan": { "$ref": "#/definitions/authHook" },
+        "roles": {
+          "type": "array",
+          "description": "Multi-role scanning — runs dynamic/AI scanners once per role",
+          "items": { "$ref": "#/definitions/authRole" }
+        }
+      }
+    },
+    "scanners": {
+      "type": "object",
+      "description": "Scanner enable/disable and configuration",
+      "additionalProperties": false,
+      "properties": {
+        "static": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean", "description": "Run Trivy filesystem scan", "default": true },
+            "trivy": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "severityThreshold": { "$ref": "#/definitions/severity" },
+                "ignoreUnfixed": { "type": "boolean", "default": false }
+              }
+            }
+          }
+        },
+        "container": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean", "description": "Run Trivy image vulnerability scan", "default": true },
+            "images": {
+              "type": "array",
+              "description": "Docker image names to scan (auto-detected from docker-compose if omitted)",
+              "items": { "type": "string" }
+            },
+            "trivy": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "severityThreshold": { "$ref": "#/definitions/severity" },
+                "ignoreUnfixed": { "type": "boolean", "default": false }
+              }
+            }
+          }
+        },
+        "dynamic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean", "description": "Run OWASP ZAP API scan", "default": true },
+            "zap": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "apiScanType": {
+                  "type": "string",
+                  "enum": ["api", "full"],
+                  "description": "api = passive spider + scan; full = active attack scan",
+                  "default": "api"
+                },
+                "maxDuration": {
+                  "type": "integer",
+                  "description": "Max seconds for ZAP scan (default: 300)",
+                  "minimum": 30,
+                  "default": 300
+                }
+              }
+            }
+          }
+        },
+        "ai": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean", "description": "Run LLM-powered behavioral security tests", "default": false },
+            "provider": {
+              "type": "string",
+              "enum": ["ollama", "openai", "anthropic"],
+              "description": "LLM provider"
+            },
+            "model": {
+              "type": "string",
+              "description": "Model name (e.g. llama3:8b, gpt-4o, claude-sonnet-4-6)",
+              "default": "llama3:8b"
+            },
+            "baseUrl": {
+              "type": "string",
+              "description": "Base URL for Ollama or custom endpoint (default: http://localhost:11434)"
+            },
+            "maxTests": {
+              "type": "integer",
+              "description": "Maximum number of AI-generated test cases to run",
+              "minimum": 1,
+              "default": 10
+            },
+            "deterministic": {
+              "type": "boolean",
+              "description": "Set temperature=0 for reproducible tests (recommended in CI)",
+              "default": false
+            },
+            "temperature": {
+              "type": "number",
+              "description": "LLM temperature (0=deterministic, 1=creative)",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maxTokens": {
+              "type": "integer",
+              "description": "Max tokens per LLM completion"
+            },
+            "replayTests": {
+              "type": "string",
+              "description": "Path to a saved test file to replay (skips LLM generation)"
+            },
+            "saveTests": {
+              "type": "string",
+              "description": "Path to save generated tests for future replay"
+            }
+          }
+        }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "description": "Severity thresholds for pass/fail decisions",
+      "additionalProperties": false,
+      "properties": {
+        "failOn": {
+          "$ref": "#/definitions/severity",
+          "description": "Exit code 1 if any finding at this severity or above",
+          "default": "HIGH"
+        },
+        "warnOn": {
+          "$ref": "#/definitions/severity",
+          "description": "Log a warning for findings at this severity",
+          "default": "MEDIUM"
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "description": "Safety constraints that prevent accidental damage to production targets",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": ["passive", "safe-active", "full-active"],
+          "description": "passive = no active requests; safe-active = authenticated seeding + passive ZAP (default); full-active = destructive methods enabled",
+          "default": "safe-active"
+        },
+        "allowProductionTargets": {
+          "type": "boolean",
+          "description": "Allow scanning production hostnames (default: false — fails fast on prod URLs)",
+          "default": false
+        },
+        "allowedHosts": {
+          "type": "array",
+          "description": "Explicit allowlist of hostnames/IPs the scanner may contact",
+          "items": { "type": "string" }
+        },
+        "excludedPaths": {
+          "type": "array",
+          "description": "Endpoint paths to never scan",
+          "items": { "type": "string" }
+        },
+        "maxRequestsPerSecond": {
+          "type": "number",
+          "description": "Rate limit for outbound scan requests (default: 2)",
+          "minimum": 0,
+          "default": 2
+        },
+        "allowDestructiveMethods": {
+          "type": "boolean",
+          "description": "Allow DELETE/PUT requests during dynamic scanning (only in full-active profile)",
+          "default": false
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "description": "Policy profiles for CI gate decisions",
+      "additionalProperties": false,
+      "properties": {
+        "profile": {
+          "type": "string",
+          "enum": ["pull-request", "main", "release", "nightly"],
+          "description": "Active policy profile. pull-request = lenient; release = strictest"
+        },
+        "baselinePath": {
+          "type": "string",
+          "description": "Path to baseline file for suppressing known findings"
+        },
+        "differentialOnly": {
+          "type": "boolean",
+          "description": "Fail only on findings NOT present in the baseline",
+          "default": false
+        },
+        "profiles": {
+          "type": "object",
+          "description": "Per-profile threshold overrides",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "failOn": { "$ref": "#/definitions/severity" },
+              "warnOn": { "$ref": "#/definitions/severity" },
+              "requireScanners": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "reporting": {
+      "type": "object",
+      "description": "Report output configuration",
+      "additionalProperties": false,
+      "properties": {
+        "outputDir": {
+          "type": "string",
+          "description": "Directory to write report files",
+          "default": "./security-reports"
+        },
+        "formats": {
+          "type": "array",
+          "description": "Report formats to generate",
+          "items": {
+            "type": "string",
+            "enum": ["markdown", "json", "sarif"]
+          },
+          "default": ["markdown", "json"]
+        },
+        "includeEvidence": {
+          "type": "boolean",
+          "description": "Include raw evidence in reports (request/response snippets)",
+          "default": true
+        }
+      }
+    }
+  },
+  "definitions": {
+    "severity": {
+      "type": "string",
+      "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+    },
+    "authHook": {
+      "type": "object",
+      "description": "Shell command to run before scanning to obtain credentials",
+      "required": ["command"],
+      "additionalProperties": false,
+      "properties": {
+        "command": { "type": "string", "description": "Executable to run" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "output": {
+          "type": "string",
+          "enum": ["raw", "json"],
+          "description": "raw = treat stdout as the token value; json = parse JSON and extract fields",
+          "default": "raw"
+        },
+        "tokenField": { "type": "string", "description": "JSON field for JWT token" },
+        "apiKeyField": { "type": "string", "description": "JSON field for API key" },
+        "cookieField": { "type": "string", "description": "JSON field for cookie value" },
+        "headersField": { "type": "string", "description": "JSON field for headers object" },
+        "timeout": { "type": "integer", "description": "Timeout in milliseconds", "default": 10000 }
+      }
+    },
+    "authRole": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "description": "Role label (e.g. admin, user, anonymous)" },
+        "type": { "type": "string", "enum": ["none", "jwt", "apikey", "session"] },
+        "token": { "type": "string" },
+        "apiKey": { "type": "string" },
+        "headerName": { "type": "string" },
+        "cookieName": { "type": "string" },
+        "cookieValue": { "type": "string" },
+        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+        "preScan": { "$ref": "#/definitions/authHook" }
+      }
+    }
+  }
+}

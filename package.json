@@ -31,6 +31,10 @@
     "test": "tsx test/integration.test.ts",
     "test:cli": "tsx test/cli.test.ts",
     "test:all": "npm run typecheck && npm test && npm run test:cli && npm run build",
+    "lint": "eslint src test",
+    "lint:fix": "eslint src test --fix",
+    "format": "prettier --write src test",
+    "format:check": "prettier --check src test",
     "sbom": "node scripts/generate-sbom.mjs",
     "demo": "tsx demo/vulnerable-api.ts"
   },
@@ -48,6 +52,11 @@
   },
   "devDependencies": {
     "@types/node": "^25.2.1",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^10.0.0",
+    "prettier": "^3.0.0",
     "tsx": "^4.21.0"
   }
 }

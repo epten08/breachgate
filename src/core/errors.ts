@@ -2,7 +2,8 @@ export class SecBotError extends Error {
   constructor(
     message: string,
     public readonly code: string,
-    public readonly cause?: Error
+    public readonly cause?: Error,
+    public readonly hint?: string
   ) {
     super(message);
     this.name = "SecBotError";
@@ -20,16 +21,17 @@ export class ScannerError extends SecBotError {
   constructor(
     message: string,
     public readonly scanner: string,
-    cause?: Error
+    cause?: Error,
+    hint?: string
   ) {
-    super(message, "SCANNER_ERROR", cause);
+    super(message, "SCANNER_ERROR", cause, hint);
     this.name = "ScannerError";
   }
 }
 
 export class ScannerUnavailableError extends ScannerError {
-  constructor(message: string, scanner: string, cause?: Error) {
-    super(message, scanner, cause);
+  constructor(message: string, scanner: string, cause?: Error, hint?: string) {
+    super(message, scanner, cause, hint);
     this.name = "ScannerUnavailableError";
   }
 }

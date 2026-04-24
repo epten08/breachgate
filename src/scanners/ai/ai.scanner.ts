@@ -58,9 +58,16 @@ export class AIScanner implements Scanner {
         isAvailable = await generator.isAvailable();
 
         if (!isAvailable) {
+          const hints: Record<string, string> = {
+            ollama: "Start Ollama: ollama serve. Then pull a model: ollama pull llama3:8b. See https://ollama.ai",
+            openai: "Set the OPENAI_API_KEY environment variable. Get a key at https://platform.openai.com/api-keys",
+            anthropic: "Set the ANTHROPIC_API_KEY environment variable. Get a key at https://console.anthropic.com",
+          };
           throw new ScannerUnavailableError(
             `AI provider ${this.config.provider} is not available`,
-            this.name
+            this.name,
+            undefined,
+            hints[this.config.provider]
           );
         }
 

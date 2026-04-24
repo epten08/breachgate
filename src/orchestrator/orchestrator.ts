@@ -36,6 +36,8 @@ export interface ScanResult {
   unavailableScanners: string[];
   scannerStatuses: ScannerStatus[];
   isComplete: boolean;
+  /** True when scanners were enabled but none completed — verdict must be INCONCLUSIVE. */
+  allScannersFailed: boolean;
 }
 
 export class Orchestrator {
@@ -79,6 +81,7 @@ export class Orchestrator {
         unavailableScanners: [],
         scannerStatuses: [],
         isComplete: true,
+        allScannersFailed: false,
       };
     }
 
@@ -101,6 +104,10 @@ export class Orchestrator {
       logger.warn(`${summary.skipped.length} scanner(s) skipped: ${summary.skipped.join(", ")}`);
     }
 
+    const allScannersFailed =
+      summary.completed.length === 0 &&
+      (summary.failed.length > 0 || summary.unavailable.length > 0 || summary.skipped.length > 0);
+
     return {
       findings: normalized,
       failedScanners: summary.failed,
@@ -109,6 +116,7 @@ export class Orchestrator {
       unavailableScanners: summary.unavailable,
       scannerStatuses: result.statuses,
       isComplete: summary.failed.length === 0,
+      allScannersFailed,
     };
   }
 
