@@ -61,7 +61,9 @@ export class ZapApiScanner implements Scanner {
     if (zapMode === "none") {
       throw new ScannerUnavailableError(
         "OWASP ZAP is not running and no ZAP Docker image or CLI command is available",
-        this.name
+        this.name,
+        undefined,
+        "Start ZAP via Docker: docker run -d -p 8080:8080 ghcr.io/zaproxy/zaproxy:stable zap.sh -daemon -port 8080 -host 0.0.0.0. Or download from https://www.zaproxy.org/download/"
       );
     }
 

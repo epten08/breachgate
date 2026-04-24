@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=./security.config.schema.json
 version: "1.0"
 
 target:

@@ -5,9 +5,10 @@ import { parse as parseYaml } from "yaml";
 import { OpenAPIObject } from "openapi3-ts/oas30";
 import { ScanOptions, parseSeverity, parseFormats, parseConfigPaths } from "../options.js";
 import { loadConfig, validateConfig, SecurityBotConfig } from "../../core/config.loader.js";
-import { ConfigError } from "../../core/errors.js";
+import { ConfigError, SecBotError } from "../../core/errors.js";
 import { logger } from "../../core/logger.js";
 import { AttackAnalyzer, SecurityVerdict } from "../../findings/attack.analyzer.js";
+import { Finding } from "../../findings/finding.js";
 import { Orchestrator, ScanResult, ScannerStatus } from "../../orchestrator/orchestrator.js";
 import { EnvironmentManager } from "../../orchestrator/environment.manager.js";
 import { AuthContext, EnvironmentContext, ExecutionContext } from "../../orchestrator/context.js";
@@ -59,6 +60,7 @@ export function createRunCommand(): Command {
     .option("--skip-container", "Skip container scanning")
     .option("--skip-dynamic", "Skip dynamic API scanning")
     .option("--skip-ai", "Skip AI-assisted testing")
+    .option("--explain-verdict", "Show how each finding's feasibility score was calculated")
     .action(async (options: ScanOptions) => {
       await runScan(options);
     });
@@ -114,6 +116,32 @@ function outputCiResult(verdict: SecurityVerdict, policyEvaluation?: PolicyEvalu
   if (verdict.breaches && verdict.breaches.length > 0) {
     console.log(`Breach: ${verdict.operationalConclusion}`);
   }
+}
+
+function printVerdictExplanation(analyzer: AttackAnalyzer, findings: Finding[]): void {
+  logger.banner("Verdict Explanation — Attack Feasibility Scoring");
+  console.log("Each finding is scored as: Reachability × Exploitability × Impact × Confidence");
+  console.log("A score ≥ 0.6 = high risk  |  ≥ 0.3 = review required  |  < 0.3 = low risk");
+  console.log("");
+
+  const rows = findings.slice(0, 20).map(f => {
+    const v = analyzer.analyzeAttackVector(f);
+    const score = (v.feasibilityScore * 100).toFixed(0).padStart(3);
+    const reach  = (v.reachability    * 100).toFixed(0).padStart(3);
+    const exploit = (v.exploitability * 100).toFixed(0).padStart(3);
+    const impact  = (v.impact         * 100).toFixed(0).padStart(3);
+    const conf    = (v.confidence     * 100).toFixed(0).padStart(3);
+    const confirmed = v.isConfirmed ? " [CONFIRMED]" : "";
+    const title = f.title.length > 40 ? f.title.slice(0, 37) + "..." : f.title.padEnd(40);
+    return `  ${score}%  ${title}  reach=${reach}% exploit=${exploit}% impact=${impact}% conf=${conf}%${confirmed}`;
+  });
+
+  console.log("  Score  Finding                                    Factors");
+  console.log("  -----  ----------------------------------------   -------");
+  for (const row of rows) {
+    console.log(row);
+  }
+  console.log("");
 }
 
 async function runScan(options: ScanOptions): Promise<void> {
@@ -223,6 +251,9 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
       console.log(`Reason: Configuration error: ${(err as Error).message}`);
     } else {
       logger.error(`Configuration error: ${(err as Error).message}`);
+      if (err instanceof SecBotError && err.hint) {
+        logger.warn(`Hint: ${err.hint}`);
+      }
     }
     return { exitCode: 2 };
   }
@@ -253,6 +284,7 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
     unavailableScanners: [],
     scannerStatuses: [],
     isComplete: false,
+    allScannersFailed: false,
   };
   const scanStartTime = Date.now();
   let targetUrlForReports = config.target.baseUrl || config.target.dockerCompose || "unknown";
@@ -302,6 +334,9 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
       console.log(`Reason: Scan failed: ${(err as Error).message}`);
     } else {
       logger.error(`Scan failed: ${(err as Error).message}`);
+      if (err instanceof SecBotError && err.hint) {
+        logger.warn(`Hint: ${err.hint}`);
+      }
     }
     return { exitCode: err instanceof ConfigError ? 2 : 1 };
   } finally {
@@ -326,6 +361,7 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
   const verdict = attackAnalyzer.generateVerdictWithStatus(findingsForVerdict, {
     isComplete: scanResult.isComplete,
     failedScanners: scanResult.failedScanners,
+    allScannersFailed: scanResult.allScannersFailed,
   });
   const policyEvaluation: PolicyEvaluation | undefined = policy
     ? evaluatePolicy({
@@ -388,6 +424,10 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
         exitCode = 0;
         break;
     }
+  }
+
+  if (options.explainVerdict && !isCiMode && scanResult.findings.length > 0) {
+    printVerdictExplanation(attackAnalyzer, scanResult.findings);
   }
 
   const reports = await generateReports(config, scanResult, verdict, {
@@ -680,6 +720,10 @@ function summarizeScanResult(
     .filter((status) => status.status === "failed" || (status.status === "unavailable" && status.required))
     .map((status) => status.name);
 
+  const allScannersFailed =
+    completedScanners.length === 0 &&
+    (failedScanners.length > 0 || unavailableScanners.length > 0 || skippedScanners.length > 0);
+
   return {
     findings,
     failedScanners,
@@ -688,6 +732,7 @@ function summarizeScanResult(
     unavailableScanners,
     scannerStatuses,
     isComplete: failedScanners.length === 0,
+    allScannersFailed,
   };
 }
 

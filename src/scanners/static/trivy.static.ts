@@ -45,7 +45,9 @@ export class TrivyStaticScanner implements Scanner {
     if (!hasTrivy && !hasDocker) {
       throw new ScannerUnavailableError(
         "Neither Trivy nor Docker is available for static scanning",
-        this.name
+        this.name,
+        undefined,
+        "Install Trivy: brew install trivy (macOS) | apt install trivy (Linux) | scoop install trivy (Windows). Or install Docker to use the container image."
       );
     }
 
@@ -55,7 +57,9 @@ export class TrivyStaticScanner implements Scanner {
       if (!imageCheck.stdout.trim()) {
         throw new ScannerUnavailableError(
           "Trivy Docker image not found. Pull with: docker pull aquasec/trivy",
-          this.name
+          this.name,
+          undefined,
+          "Run: docker pull aquasec/trivy"
         );
       }
       this.useDocker = true;

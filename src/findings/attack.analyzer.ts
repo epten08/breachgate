@@ -158,9 +158,9 @@ export class AttackAnalyzer {
   }
 
   /**
-   * Analyze a single finding as an attack vector
+   * Analyze a single finding as an attack vector (public for --explain-verdict)
    */
-  private analyzeAttackVector(finding: Finding): AttackVector {
+  analyzeAttackVector(finding: Finding): AttackVector {
     const reachability = this.calculateReachability(finding);
     const exploitability = this.calculateExploitability(finding);
     const impact = this.calculateImpact(finding);
@@ -571,15 +571,20 @@ export class AttackAnalyzer {
    */
   generateVerdictWithStatus(
     findings: Finding[],
-    scanStatus: { isComplete: boolean; failedScanners: string[] }
+    scanStatus: { isComplete: boolean; failedScanners: string[]; allScannersFailed?: boolean }
   ): SecurityVerdict {
-    // First check for scanner failures
-    if (!scanStatus.isComplete && scanStatus.failedScanners.length > 0) {
-      // SCAN FAILED ≠ NO VULNERABILITIES
-      // We cannot claim safety if we didn't complete the scan
+    // SCAN FAILED ≠ NO VULNERABILITIES
+    // We cannot claim safety if we didn't complete the scan.
+    const incompleteWithFailures = !scanStatus.isComplete && scanStatus.failedScanners.length > 0;
+    const noScannerCompleted = scanStatus.allScannersFailed === true;
+
+    if (incompleteWithFailures || noScannerCompleted) {
+      const failedList = scanStatus.failedScanners.length > 0
+        ? `${scanStatus.failedScanners.join(", ")} failed`
+        : "no scanners completed";
       return {
         verdict: "INCONCLUSIVE",
-        reason: `Scan incomplete: ${scanStatus.failedScanners.join(", ")} failed. Cannot determine security status.`,
+        reason: `Scan incomplete: ${failedList}. Cannot determine security status.`,
         breaches: [],
         operationalConclusion: "",
         criticalFindings: [],
