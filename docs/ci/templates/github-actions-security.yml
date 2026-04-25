@@ -1,0 +1,58 @@
+name: Security Bot
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  security-bot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      JWT_TOKEN: ${{ secrets.SECURITY_BOT_JWT_TOKEN }}
+      API_KEY: ${{ secrets.SECURITY_BOT_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select scan depth
+        id: scan-depth
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "args=--profile pull-request --differential --skip-dynamic --skip-ai" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "args=--profile nightly -v" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=--profile main" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Sec Bot
+        uses: OWNER/sec-boc@v1
+        with:
+          config: security.config.yml
+          target: ${{ vars.SECURITY_BOT_API_URL }}
+          output: security-reports
+          format: json,markdown,sarif
+          scan-args: ${{ steps.scan-depth.outputs.args }}
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: security-reports/security-report.sarif
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: security-reports/

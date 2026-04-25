@@ -107,7 +107,7 @@ export interface ScannersConfig {
   };
 }
 
-export type ReportFormat = "markdown" | "json" | "sarif";
+export type ReportFormat = "markdown" | "json" | "sarif" | "html";
 
 export interface ReportingConfig {
   outputDir: string;

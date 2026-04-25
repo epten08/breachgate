@@ -1,48 +1,54 @@
-import { Dirent, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+/**
+ * CLI hardening tests.
+ * These tests spawn the CLI as a subprocess to validate exit codes,
+ * multi-config support, and report schema stability.
+ */
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, Dirent } from "fs";
 import { dirname, join, resolve } from "path";
 import { runProcess } from "../src/core/process.runner.js";
 
-interface CliResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
+const ROOT = resolve("test-cli-output");
 
-function assert(condition: boolean, message: string): void {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
-}
+beforeAll(() => {
+  rmSync(ROOT, { recursive: true, force: true });
+  mkdirSync(ROOT, { recursive: true });
+});
 
-function assertEqual<T>(actual: T, expected: T, message: string): void {
-  if (actual !== expected) {
-    throw new Error(`${message}: expected ${expected}, got ${actual}`);
-  }
-}
+afterAll(() => {
+  rmSync(ROOT, { recursive: true, force: true });
+});
 
-async function runTest(name: string, fn: () => Promise<void> | void): Promise<boolean> {
-  try {
-    await fn();
-    console.log(`  ✓ ${name}`);
-    return true;
-  } catch (err) {
-    console.log(`  ✗ ${name}`);
-    console.log(`    Error: ${(err as Error).message}`);
-    return false;
-  }
-}
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-async function runCli(args: string[], env?: Record<string, string>): Promise<CliResult> {
+async function runCli(args: string[], env?: Record<string, string>) {
   const tsxBin = resolve("node_modules/tsx/dist/cli.mjs");
-  return runProcess(process.execPath, [tsxBin, "src/cli/index.ts", ...args], {
-    env,
-    timeout: 120000,
-  });
+  return runProcess(process.execPath, [tsxBin, "src/cli/index.ts", ...args], { env, timeout: 120000 });
 }
 
 function writeConfig(path: string, body: string): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, body.trimStart(), "utf-8");
+}
+
+function readJson(path: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
+}
+
+function findFiles(root: string, filename: string): string[] {
+  if (!existsSync(root)) return [];
+  const results: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true }) as Dirent[]) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...findFiles(path, filename));
+    } else if (entry.isFile() && entry.name === filename) {
+      results.push(path);
+    }
+  }
+  return results;
 }
 
 function disabledScannerConfig(outputDir: string): string {
@@ -95,184 +101,120 @@ reporting:
 `;
 }
 
-function readJson(path: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-}
+// ---------------------------------------------------------------------------
+// Exit Codes
+// ---------------------------------------------------------------------------
 
-async function testCliExitCodes(root: string): Promise<boolean> {
-  console.log("\nCLI Exit Code Tests:");
-  let passed = 0;
-  let total = 0;
-
-  total++;
-  if (await runTest("returns 0 for a clean CI scan", async () => {
-    const configPath = join(root, "clean-security.config.yml");
-    const outputDir = join(root, "clean-reports").replace(/\\/g, "/");
+describe("CLI Exit Codes", () => {
+  it("returns 0 for a clean CI scan with all scanners disabled", async () => {
+    const configPath = join(ROOT, "clean-security.config.yml");
+    const outputDir = join(ROOT, "clean-reports").replace(/\\/g, "/");
     writeConfig(configPath, disabledScannerConfig(outputDir));
 
     const result = await runCli(["scan", "--ci", "--config", configPath, "--format", "json"]);
-    assertEqual(result.exitCode, 0, "Clean scan should exit 0");
-    assert(result.stdout.includes("SECURITY STATUS: PASSED"), "Should print passed status");
-    assert(existsSync(join(outputDir, "security-report.json")), "Should write JSON report");
-  })) passed++;
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("SECURITY STATUS: PASSED");
+    expect(existsSync(join(outputDir, "security-report.json"))).toBe(true);
+  });
 
-  total++;
-  if (await runTest("returns 2 for configuration errors", async () => {
-    const result = await runCli(["scan", "--ci", "--config", join(root, "missing.yml")]);
-    assertEqual(result.exitCode, 2, "Missing config should exit 2");
-    assert(result.stdout.includes("Configuration error"), "Should explain configuration failure");
-  })) passed++;
+  it("returns 2 for configuration errors (missing config file)", async () => {
+    const result = await runCli(["scan", "--ci", "--config", join(ROOT, "missing.yml")]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toContain("Configuration error");
+  });
 
-  total++;
-  if (await runTest("returns 1 when a required scanner is unavailable", async () => {
-    const configPath = join(root, "static-security.config.yml");
-    const outputDir = join(root, "static-reports").replace(/\\/g, "/");
+  it("returns 1 when a required scanner is unavailable and lists it in the report", async () => {
+    const configPath = join(ROOT, "static-security.config.yml");
+    const outputDir = join(ROOT, "static-reports").replace(/\\/g, "/");
     writeConfig(configPath, staticScannerConfig(outputDir));
 
-    const result = await runCli(["scan", "--ci", "--config", configPath], {
-      PATH: "",
-      Path: "",
-    });
+    const result = await runCli(["scan", "--ci", "--config", configPath], { PATH: "", Path: "" });
 
-    assertEqual(result.exitCode, 1, "Unavailable required scanner should exit 1");
-    assert(result.stdout.includes("SECURITY STATUS: FAILED"), "Policy should fail the scan");
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("SECURITY STATUS: FAILED");
+
     const report = readJson(join(outputDir, "security-report.json"));
-    const scannerStatus = report.scannerStatus as {
-      unavailable: string[];
-      failed: string[];
-    };
-    assert(scannerStatus.unavailable.includes("Trivy Static"), "Report should list unavailable scanner");
-    assert(scannerStatus.failed.includes("Trivy Static"), "Report should list failed scanner gate");
-  })) passed++;
+    const scannerStatus = report.scannerStatus as { unavailable: string[]; failed: string[] };
+    expect(scannerStatus.unavailable).toContain("Trivy Static");
+    expect(scannerStatus.failed).toContain("Trivy Static");
+  });
+});
 
-  console.log(`  ${passed}/${total} tests passed`);
-  return passed === total;
-}
+// ---------------------------------------------------------------------------
+// Monorepo / Multi-Config
+// ---------------------------------------------------------------------------
 
-async function testMonorepoOptions(root: string): Promise<boolean> {
-  console.log("\nMonorepo And Multi-Config Tests:");
-  let passed = 0;
-  let total = 0;
-
-  total++;
-  if (await runTest("resolves config paths from --workdir", async () => {
-    const serviceDir = join(root, "service-a");
+describe("Monorepo and Multi-Config", () => {
+  it("resolves config paths relative to --workdir", async () => {
+    const serviceDir = join(ROOT, "service-a");
     writeConfig(join(serviceDir, "security.config.yml"), disabledScannerConfig("./reports"));
 
     const result = await runCli([
-      "scan",
-      "--ci",
-      "--workdir",
-      serviceDir,
-      "--config",
-      "security.config.yml",
-      "--format",
-      "json",
+      "scan", "--ci",
+      "--workdir", serviceDir,
+      "--config", "security.config.yml",
+      "--format", "json",
     ]);
 
-    assertEqual(result.exitCode, 0, "Workdir scan should exit 0");
-    assert(existsSync(join(serviceDir, "reports", "security-report.json")), "Report should be relative to workdir");
-  })) passed++;
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(join(serviceDir, "reports", "security-report.json"))).toBe(true);
+  });
 
-  total++;
-  if (await runTest("runs multiple configs with isolated report directories", async () => {
-    const svcA = join(root, "svc-a", "security.config.yml");
-    const svcB = join(root, "svc-b", "security.config.yml");
-    const outputDir = join(root, "multi-reports");
+  it("runs multiple configs with isolated report directories", async () => {
+    const svcA = join(ROOT, "svc-a", "security.config.yml");
+    const svcB = join(ROOT, "svc-b", "security.config.yml");
+    const outputDir = join(ROOT, "multi-reports");
     writeConfig(svcA, disabledScannerConfig("./reports"));
     writeConfig(svcB, disabledScannerConfig("./reports"));
 
     const result = await runCli([
-      "scan",
-      "--ci",
-      "--configs",
-      `${svcA},${svcB}`,
-      "--output",
-      outputDir,
-      "--format",
-      "json",
+      "scan", "--ci",
+      "--configs", `${svcA},${svcB}`,
+      "--output", outputDir,
+      "--format", "json",
     ]);
 
-    assertEqual(result.exitCode, 0, "Multi-config scan should exit 0");
-    assert(result.stdout.includes("SECURITY CONFIG:"), "Should label each config in output");
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("SECURITY CONFIG:");
     const reportFiles = findFiles(outputDir, "security-report.json");
-    assertEqual(reportFiles.length, 2, "Should write one JSON report per config");
-  })) passed++;
+    expect(reportFiles.length).toBe(2);
+  });
+});
 
-  console.log(`  ${passed}/${total} tests passed`);
-  return passed === total;
-}
+// ---------------------------------------------------------------------------
+// Report Schema Compatibility
+// ---------------------------------------------------------------------------
 
-async function testReportSchemaCompatibility(root: string): Promise<boolean> {
-  console.log("\nReport Schema Compatibility Tests:");
-  let passed = 0;
-  let total = 0;
-
-  total++;
-  if (await runTest("emits required JSON report fields", async () => {
-    const configPath = join(root, "schema-security.config.yml");
-    const outputDir = join(root, "schema-reports").replace(/\\/g, "/");
+describe("Report Schema Compatibility", () => {
+  it("emits all required JSON report fields", async () => {
+    const configPath = join(ROOT, "schema-security.config.yml");
+    const outputDir = join(ROOT, "schema-reports").replace(/\\/g, "/");
     writeConfig(configPath, disabledScannerConfig(outputDir));
 
     const result = await runCli(["scan", "--ci", "--config", configPath, "--format", "json"]);
-    assertEqual(result.exitCode, 0, "Schema scan should exit 0");
+    expect(result.exitCode).toBe(0);
 
     const report = readJson(join(outputDir, "security-report.json"));
-    assertEqual((report.metadata as Record<string, unknown>).schemaVersion, "1.3.0", "Schema version should remain compatible");
-    assert(report.verdict !== undefined, "Report should include verdict");
-    assert(report.scannerStatus !== undefined, "Report should include scanner status");
-    assert(report.policy !== undefined, "Report should include active policy");
-    assert(report.policyEvaluation !== undefined, "Report should include policy evaluation");
-    assert(Array.isArray(report.findings), "Report findings should be an array");
-  })) passed++;
+    expect((report.metadata as Record<string, unknown>).schemaVersion).toBe("1.3.0");
+    expect(report.verdict).toBeDefined();
+    expect(report.scannerStatus).toBeDefined();
+    expect(report.policy).toBeDefined();
+    expect(report.policyEvaluation).toBeDefined();
+    expect(Array.isArray(report.findings)).toBe(true);
+  });
 
-  console.log(`  ${passed}/${total} tests passed`);
-  return passed === total;
-}
+  it("generates self-contained HTML report via --format html", async () => {
+    const configPath = join(ROOT, "html-security.config.yml");
+    const outputDir = join(ROOT, "html-reports").replace(/\\/g, "/");
+    writeConfig(configPath, disabledScannerConfig(outputDir));
 
-function findFiles(root: string, filename: string): string[] {
-  if (!existsSync(root)) {
-    return [];
-  }
+    const result = await runCli(["scan", "--ci", "--config", configPath, "--format", "html"]);
+    expect(result.exitCode).toBe(0);
 
-  const results: string[] = [];
-  const entries = readdirSync(root, { withFileTypes: true }) as Dirent[];
-
-  for (const entry of entries) {
-    const path = join(root, entry.name);
-    if (entry.isDirectory()) {
-      results.push(...findFiles(path, filename));
-    } else if (entry.isFile() && entry.name === filename) {
-      results.push(path);
-    }
-  }
-
-  return results;
-}
-
-async function main(): Promise<void> {
-  const root = resolve("test-cli-output");
-  rmSync(root, { recursive: true, force: true });
-  mkdirSync(root, { recursive: true });
-
-  try {
-    const results = [
-      await testCliExitCodes(root),
-      await testMonorepoOptions(root),
-      await testReportSchemaCompatibility(root),
-    ];
-
-    if (!results.every(Boolean)) {
-      process.exit(1);
-    }
-
-    console.log("\n✓ CLI hardening tests passed");
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-}
-
-main().catch((err) => {
-  console.error("CLI test runner failed:", err);
-  process.exit(1);
+    const htmlPath = join(outputDir, "security-report.html");
+    expect(existsSync(htmlPath)).toBe(true);
+    const html = readFileSync(htmlPath, "utf-8");
+    expect(html).toContain("<!DOCTYPE html>");
+    expect(html).toContain("Breach Gate Security Report");
+  });
 });

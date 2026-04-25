@@ -8,6 +8,7 @@ import { PolicyEvaluation } from "../policy/policy.js";
 import { JsonReporter } from "./json.reporter.js";
 import { MarkdownReporter } from "./markdown.reporter.js";
 import { SarifReporter } from "./sarif.reporter.js";
+import { HtmlReporter } from "./html.reporter.js";
 import { CliSummary, CliSummaryOptions } from "./cli.summary.js";
 import { logger } from "../core/logger.js";
 
@@ -36,12 +37,14 @@ export class ReportGenerator {
   private jsonReporter: JsonReporter;
   private markdownReporter: MarkdownReporter;
   private sarifReporter: SarifReporter;
+  private htmlReporter: HtmlReporter;
 
   constructor(config: ReportingConfig) {
     this.config = config;
     this.jsonReporter = new JsonReporter(config);
     this.markdownReporter = new MarkdownReporter(config);
     this.sarifReporter = new SarifReporter();
+    this.htmlReporter = new HtmlReporter(config);
   }
 
   async generate(findings: Finding[], options: ReportOptions): Promise<GeneratedReport[]> {
@@ -100,6 +103,13 @@ export class ReportGenerator {
           policyEvaluation: options.policyEvaluation,
         });
 
+      case "html":
+        return this.htmlReporter.generate(findings, {
+          targetUrl: options.targetUrl,
+          scanDuration: options.scanDuration,
+          verdict: options.verdict,
+        });
+
       default:
         throw new Error(`Unsupported report format: ${format}`);
     }
@@ -118,7 +128,8 @@ export class ReportGenerator {
   }
 
   private getFilename(format: ReportFormat, dateStr: string, stable = false): string {
-    const extension = format === "markdown" ? "md" : format;
+    const ext: Record<ReportFormat, string> = { markdown: "md", json: "json", sarif: "sarif", html: "html" };
+    const extension = ext[format] ?? format;
     if (stable) {
       return `security-report.${extension}`;
     }

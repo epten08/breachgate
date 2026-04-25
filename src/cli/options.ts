@@ -39,8 +39,8 @@ export function parseSeverity(value: string): Severity {
 export function parseFormats(value: string, previous: string[] = []): string[] {
   const formats = value.split(",").map((f) => f.trim().toLowerCase());
   for (const format of formats) {
-    if (!["markdown", "json", "sarif"].includes(format)) {
-      throw new Error(`Invalid format: ${format}. Must be markdown, json, or sarif`);
+    if (!["markdown", "json", "sarif", "html"].includes(format)) {
+      throw new Error(`Invalid format: ${format}. Must be markdown, json, sarif, or html`);
     }
   }
   return [...previous, ...formats];

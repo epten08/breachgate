@@ -325,7 +325,7 @@
           "description": "Report formats to generate",
           "items": {
             "type": "string",
-            "enum": ["markdown", "json", "sarif"]
+            "enum": ["markdown", "json", "sarif", "html"]
           },
           "default": ["markdown", "json"]
         },

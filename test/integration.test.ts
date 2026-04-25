@@ -1,22 +1,23 @@
 /**
- * Integration tests for Breach Gate
- *
- * These tests validate the end-to-end pipeline without requiring
- * external tools (Trivy, ZAP, Ollama) to be installed.
+ * Integration tests for Breach Gate.
+ * Validates the end-to-end pipeline without requiring external tools
+ * (Trivy, ZAP, Ollama) to be installed.
  */
+import { describe, it, expect, beforeAll, afterEach } from "vitest";
+import { existsSync, rmSync, mkdirSync, writeFileSync } from "fs";
+import { join } from "path";
 
 import { loadConfig, validateConfig } from "../src/core/config.loader.js";
 import { logger } from "../src/core/logger.js";
-import { Finding, Severity } from "../src/findings/finding.js";
+import { Finding } from "../src/findings/finding.js";
 import { normalizeFindings, sortByRisk } from "../src/findings/normalizer.js";
 import { RawFinding } from "../src/findings/raw.finding.js";
 import { ReportGenerator } from "../src/reports/report.generator.js";
 import { JsonReporter } from "../src/reports/json.reporter.js";
 import { MarkdownReporter } from "../src/reports/markdown.reporter.js";
 import { SarifReporter } from "../src/reports/sarif.reporter.js";
+import { HtmlReporter } from "../src/reports/html.reporter.js";
 import { CliSummary } from "../src/reports/cli.summary.js";
-import { existsSync, rmSync, mkdirSync, writeFileSync } from "fs";
-import { join } from "path";
 import { AttackAnalyzer } from "../src/findings/attack.analyzer.js";
 import { Orchestrator, ScanResult } from "../src/orchestrator/orchestrator.js";
 import { resolveAuthContexts, buildAuthHeaders } from "../src/auth/auth.js";
@@ -38,32 +39,14 @@ import {
   resolvePolicyRules,
 } from "../src/policy/policy.js";
 
-// Test utilities
-function assert(condition: boolean, message: string): void {
-  if (!condition) {
-    throw new Error(`Assertion failed: ${message}`);
-  }
-}
+beforeAll(() => {
+  logger.setLevel("error"); // Suppress internal logs during tests
+});
 
-function assertEqual<T>(actual: T, expected: T, message: string): void {
-  if (actual !== expected) {
-    throw new Error(`${message}: expected ${expected}, got ${actual}`);
-  }
-}
+// ---------------------------------------------------------------------------
+// Test Fixtures
+// ---------------------------------------------------------------------------
 
-async function runTest(name: string, fn: () => Promise<void> | void): Promise<boolean> {
-  try {
-    await fn();
-    console.log(`  ✓ ${name}`);
-    return true;
-  } catch (err) {
-    console.log(`  ✗ ${name}`);
-    console.log(`    Error: ${(err as Error).message}`);
-    return false;
-  }
-}
-
-// Test Data
 function createMockRawFindings(): RawFinding[] {
   return [
     {
@@ -113,41 +96,78 @@ function createMockRawFindings(): RawFinding[] {
   ];
 }
 
-// Tests
-async function testConfigLoader(): Promise<boolean> {
-  console.log("\n📋 Config Loader Tests:");
-  let passed = 0;
-  let total = 0;
+function createHeaderTestCase(): SecurityTestCase {
+  return {
+    name: "Missing Header - GET /health",
+    endpoint: "GET /health",
+    category: "Security Misconfiguration",
+    description: "Detect a missing response header",
+    request: { method: "GET", path: "/health" },
+    expectedVulnerable: { headerMissing: ["X-Test-Security"] },
+  };
+}
 
-  total++;
-  if (await runTest("loads default config when no file specified", () => {
+function createMockScanner(
+  name: string,
+  category: Scanner["category"],
+  run: Scanner["run"]
+): Scanner {
+  return { name, category, run };
+}
+
+function createTestExecutionContext(auth?: ExecutionContext["auth"]): ExecutionContext {
+  return {
+    targetUrl: "http://localhost:3000",
+    environment: {
+      baseUrl: "http://localhost:3000",
+      images: [],
+      services: [],
+      managedByUs: false,
+    },
+    auth: auth ?? { type: "none", role: "anonymous" },
+    config: {
+      failOnSeverity: "HIGH",
+      safety: {
+        profile: "safe-active",
+        allowProductionTargets: false,
+        allowedHosts: [],
+        excludedPaths: [],
+        maxRequestsPerSecond: 0,
+        allowDestructiveMethods: false,
+      },
+    },
+  };
+}
+
+const reportConfig = {
+  formats: ["json", "markdown"] as ("json" | "markdown")[],
+  outputDir: "./test-reports",
+  includeEvidence: true,
+};
+
+// ---------------------------------------------------------------------------
+// Config Loader
+// ---------------------------------------------------------------------------
+
+describe("Config Loader", () => {
+  it("loads default config when no file specified", () => {
     const config = loadConfig();
-    assert(config !== null, "Config should not be null");
-    assert(config.target !== undefined, "Target should be defined");
-  })) passed++;
+    expect(config).toBeTruthy();
+    expect(config.target).toBeDefined();
+  });
 
-  total++;
-  if (await runTest("validates config structure", () => {
+  it("validates config structure", () => {
     const config = loadConfig();
-    validateConfig(config);
-    assert(config.scanners !== undefined, "Scanners should be defined");
-  })) passed++;
+    expect(() => validateConfig(config)).not.toThrow();
+    expect(config.scanners).toBeDefined();
+  });
 
-  total++;
-  if (await runTest("throws on missing explicit config file", () => {
-    let threw = false;
-    try {
-      loadConfig("nonexistent.yml");
-    } catch (err) {
-      threw = true;
-      assert((err as Error).message.includes("Config file not found"), "Should throw ConfigError");
-    }
-    assert(threw, "Should throw when explicit config file is missing");
-  })) passed++;
+  it("throws on missing explicit config file", () => {
+    expect(() => loadConfig("nonexistent.yml")).toThrow("Config file not found");
+  });
 
-  total++;
-  if (await runTest("expands environment variables in config values", () => {
-    const testDir = "./test-output";
+  it("expands environment variables in config values", () => {
+    const testDir = "./test-output-config";
     const configPath = join(testDir, "env-security.config.yml");
     mkdirSync(testDir, { recursive: true });
     process.env.SEC_BOT_TEST_JWT = "test-token";
@@ -176,19 +196,18 @@ reporting:
   formats:
     - json
   includeEvidence: true
-`, "utf-8");
+`.trimStart(), "utf-8");
 
     const config = loadConfig(configPath);
-    assertEqual(config.auth?.token, "test-token", "Should expand JWT token");
+    expect(config.auth?.token).toBe("test-token");
 
     rmSync(testDir, { recursive: true });
     delete process.env.SEC_BOT_TEST_JWT;
-  })) passed++;
+  });
 
-  total++;
-  if (await runTest("throws on missing environment variables in config values", () => {
-    const testDir = "./test-output";
-    const configPath = join(testDir, "missing-env-security.config.yml");
+  it("throws on missing environment variables in config values", () => {
+    const testDir = "./test-output-config-missing";
+    const configPath = join(testDir, "missing-env.config.yml");
     mkdirSync(testDir, { recursive: true });
 
     writeFileSync(configPath, `
@@ -198,98 +217,73 @@ target:
 auth:
   type: jwt
   token: \${SEC_BOT_MISSING_JWT}
-`, "utf-8");
+`.trimStart(), "utf-8");
 
-    let threw = false;
-    try {
-      loadConfig(configPath);
-    } catch (err) {
-      threw = true;
-      assert((err as Error).message.includes("SEC_BOT_MISSING_JWT"), "Should name missing variable");
-    }
+    expect(() => loadConfig(configPath)).toThrow("SEC_BOT_MISSING_JWT");
 
-    assert(threw, "Should throw when env var is missing");
     rmSync(testDir, { recursive: true });
-  })) passed++;
+  });
+});
 
-  console.log(`  ${passed}/${total} tests passed`);
-  return passed === total;
-}
+// ---------------------------------------------------------------------------
+// Findings Normalizer
+// ---------------------------------------------------------------------------
 
-async function testFindingsNormalizer(): Promise<boolean> {
-  console.log("\n🔍 Findings Normalizer Tests:");
-  let passed = 0;
-  let total = 0;
-
+describe("Findings Normalizer", () => {
   const rawFindings = createMockRawFindings();
 
-  total++;
-  if (await runTest("normalizes raw findings to Finding objects", () => {
+  it("normalizes raw findings to Finding objects", () => {
     const normalized = normalizeFindings(rawFindings);
-    assert(Array.isArray(normalized), "Should return array");
-    assert(normalized.length > 0, "Should have findings");
-    assert(normalized[0].riskScore !== undefined, "Should have risk score");
-  })) passed++;
+    expect(Array.isArray(normalized)).toBe(true);
+    expect(normalized.length).toBeGreaterThan(0);
+    expect(normalized[0].riskScore).toBeDefined();
+  });
 
-  total++;
-  if (await runTest("calculates risk scores", () => {
+  it("calculates risk scores in range 0-1", () => {
     const normalized = normalizeFindings(rawFindings);
     for (const finding of normalized) {
-      assert(finding.riskScore >= 0 && finding.riskScore <= 1, "Risk score should be 0-1");
-      assert(finding.exploitability >= 0, "Exploitability should be >= 0");
-      assert(finding.confidence >= 0, "Confidence should be >= 0");
+      expect(finding.riskScore).toBeGreaterThanOrEqual(0);
+      expect(finding.riskScore).toBeLessThanOrEqual(1);
+      expect(finding.exploitability).toBeGreaterThanOrEqual(0);
+      expect(finding.confidence).toBeGreaterThanOrEqual(0);
     }
-  })) passed++;
+  });
 
-  total++;
-  if (await runTest("deduplicates similar findings", () => {
+  it("deduplicates similar findings", () => {
     const normalized = normalizeFindings(rawFindings);
-    // Should deduplicate the two SQL injection findings
-    const sqlFindings = normalized.filter(f => f.title.includes("SQL Injection"));
-    assert(sqlFindings.length === 1, "Should deduplicate SQL injection findings");
-    assert(sqlFindings[0].duplicateCount >= 1, "Should track duplicate count");
-  })) passed++;
+    const sqlFindings = normalized.filter((f) => f.title.includes("SQL Injection"));
+    expect(sqlFindings.length).toBe(1);
+    expect(sqlFindings[0].duplicateCount).toBeGreaterThanOrEqual(1);
+  });
 
-  total++;
-  if (await runTest("sorts by risk correctly", () => {
+  it("sorts by risk in descending order", () => {
     const normalized = normalizeFindings(rawFindings);
     const sorted = sortByRisk(normalized);
     for (let i = 1; i < sorted.length; i++) {
-      assert(sorted[i - 1].riskScore >= sorted[i].riskScore, "Should be sorted by risk desc");
+      expect(sorted[i - 1].riskScore).toBeGreaterThanOrEqual(sorted[i].riskScore);
     }
-  })) passed++;
+  });
+});
 
-  console.log(`  ${passed}/${total} tests passed`);
-  return passed === total;
-}
+// ---------------------------------------------------------------------------
+// Reporting
+// ---------------------------------------------------------------------------
 
-async function testReporting(): Promise<boolean> {
-  console.log("\n📊 Reporting Tests:");
-  let passed = 0;
-  let total = 0;
-
+describe("Reporting", () => {
   const rawFindings = createMockRawFindings();
   const findings = normalizeFindings(rawFindings);
 
-  const reportConfig = {
-    formats: ["json", "markdown"] as ("json" | "markdown")[],
-    outputDir: "./test-reports",
-    includeEvidence: true,
-  };
-
-  total++;
-  if (await runTest("generates JSON report", () => {
+  it("generates valid JSON report", () => {
     const reporter = new JsonReporter(reportConfig);
     const json = reporter.generate(findings, { targetUrl: "http://localhost:3000" });
     const parsed = JSON.parse(json);
-    assert(parsed.metadata !== undefined, "Should have metadata");
-    assert(parsed.summary !== undefined, "Should have summary");
-    assert(parsed.findings !== undefined, "Should have findings");
-    assert(parsed.summary.total === findings.length, "Should have correct count");
-  })) passed++;
+    expect(parsed.metadata).toBeDefined();
+    expect(parsed.summary).toBeDefined();
+    expect(parsed.findings).toBeDefined();
+    expect(parsed.summary.total).toBe(findings.length);
+  });
 
-  total++;
-  if (await runTest("JSON report includes verdict, scanner status, and policy", () => {
+  it("JSON report includes verdict, scanner status, and policy", () => {
     const analyzer = new AttackAnalyzer();
     const verdict = analyzer.generateVerdictWithStatus(findings, {
       isComplete: false,
@@ -302,23 +296,11 @@ async function testReporting(): Promise<boolean> {
       skippedScanners: [],
       unavailableScanners: ["Trivy Static"],
       scannerStatuses: [
-        {
-          name: "Trivy Static",
-          category: "static",
-          status: "unavailable",
-          required: true,
-          durationMs: 10,
-          message: "Trivy unavailable",
-        },
-        {
-          name: "OWASP ZAP API",
-          category: "dynamic",
-          status: "completed",
-          required: true,
-          durationMs: 20,
-        },
+        { name: "Trivy Static", category: "static", status: "unavailable", required: true, durationMs: 10, message: "Trivy unavailable" },
+        { name: "OWASP ZAP API", category: "dynamic", status: "completed", required: true, durationMs: 20 },
       ],
       isComplete: false,
+      allScannersFailed: false,
     };
 
     const reporter = new JsonReporter(reportConfig);
@@ -326,115 +308,90 @@ async function testReporting(): Promise<boolean> {
       targetUrl: "http://localhost:3000",
       verdict,
       scanResult,
-      policy: {
-        failOn: "HIGH",
-        warnOn: "MEDIUM",
-      },
+      policy: { failOn: "HIGH", warnOn: "MEDIUM" },
     });
     const parsed = JSON.parse(json);
 
-    assertEqual(parsed.verdict.status, "INCONCLUSIVE", "Should include verdict");
-    assertEqual(parsed.scannerStatus.unavailable[0], "Trivy Static", "Should include unavailable scanner");
-    assertEqual(parsed.policy.failOn, "HIGH", "Should include policy");
-  })) passed++;
+    expect(parsed.verdict.status).toBe("INCONCLUSIVE");
+    expect(parsed.scannerStatus.unavailable[0]).toBe("Trivy Static");
+    expect(parsed.policy.failOn).toBe("HIGH");
+  });
 
-  total++;
-  if (await runTest("generates Markdown report", () => {
+  it("generates Markdown report with expected sections", () => {
     const reporter = new MarkdownReporter(reportConfig);
     const md = reporter.generate(findings, { targetUrl: "http://localhost:3000" });
-    assert(md.includes("# Security Scan Report"), "Should have title");
-    assert(md.includes("## Executive Summary"), "Should have summary");
-    assert(md.includes("## Findings Summary"), "Should have findings table");
-  })) passed++;
+    expect(md).toContain("# Security Scan Report");
+    expect(md).toContain("## Executive Summary");
+    expect(md).toContain("## Findings Summary");
+  });
 
-  total++;
-  if (await runTest("generates SARIF report", () => {
+  it("generates valid SARIF 2.1.0 report", () => {
     const reporter = new SarifReporter();
     const sarif = reporter.generate(findings, { targetUrl: "http://localhost:3000" });
     const parsed = JSON.parse(sarif);
-    assertEqual(parsed.version, "2.1.0", "Should generate SARIF 2.1.0");
-    assert(parsed.runs[0].results.length === findings.length, "Should include findings");
-  })) passed++;
+    expect(parsed.version).toBe("2.1.0");
+    expect(parsed.runs[0].results.length).toBe(findings.length);
+  });
 
-  total++;
-  if (await runTest("CLI summary renders without error", () => {
+  it("generates self-contained HTML report", () => {
+    const reporter = new HtmlReporter(reportConfig);
+    const html = reporter.generate(findings, { targetUrl: "http://localhost:3000" });
+    expect(html).toContain("<!DOCTYPE html>");
+    expect(html).toContain("Breach Gate Security Report");
+    expect(html).toContain("class=\"logo\"");
+    expect(html.includes("<script src") || html.includes("<link rel=\"stylesheet\"")).toBe(false);
+  });
+
+  it("CLI summary renders without error", () => {
     const summary = new CliSummary({ maxFindings: 5, verbose: false });
-    // Just ensure it doesn't throw
-    summary.render(findings);
-  })) passed++;
+    expect(() => summary.render(findings)).not.toThrow();
+  });
 
-  total++;
-  if (await runTest("ReportGenerator creates files", async () => {
-    const testDir = "./test-output";
-    if (existsSync(testDir)) {
-      rmSync(testDir, { recursive: true });
-    }
+  it("ReportGenerator creates files on disk", async () => {
+    const testDir = "./test-output-reports";
+    if (existsSync(testDir)) rmSync(testDir, { recursive: true });
     mkdirSync(testDir, { recursive: true });
 
-    const generator = new ReportGenerator({
-      ...reportConfig,
-      outputDir: testDir,
-    });
-
+    const generator = new ReportGenerator({ ...reportConfig, outputDir: testDir });
     const reports = await generator.generate(findings, {
       targetUrl: "http://localhost:3000",
       scanDuration: 5000,
     });
 
-    assert(reports.length === 2, "Should generate 2 reports");
+    expect(reports.length).toBe(2);
     for (const report of reports) {
-      assert(existsSync(report.path), `Report should exist: ${report.path}`);
+      expect(existsSync(report.path)).toBe(true);
     }
 
-    // Cleanup
     rmSync(testDir, { recursive: true });
-  })) passed++;
+  });
+});
 
-  console.log(`  ${passed}/${total} tests passed`);
-  return passed === total;
-}
+// ---------------------------------------------------------------------------
+// Policy
+// ---------------------------------------------------------------------------
 
-async function testPolicy(): Promise<boolean> {
-  console.log("\n🧭 Policy Tests:");
-  let passed = 0;
-  let total = 0;
-
+describe("Policy", () => {
   const findings = normalizeFindings(createMockRawFindings());
 
-  total++;
-  if (await runTest("fingerprints findings deterministically", () => {
-    const first = fingerprintFinding(findings[0]);
-    const second = fingerprintFinding(findings[0]);
-    assertEqual(first, second, "Fingerprint should be deterministic");
-  })) passed++;
+  it("fingerprints findings deterministically", () => {
+    expect(fingerprintFinding(findings[0])).toBe(fingerprintFinding(findings[0]));
+  });
 
-  total++;
-  if (await runTest("suppresses baseline findings", () => {
+  it("suppresses baseline findings", () => {
     const fingerprint = fingerprintFinding(findings[0]);
     const result = applyBaseline(findings, {
       version: "1.0",
-      findings: [
-        {
-          fingerprint,
-          owner: "security",
-          reason: "Accepted test finding",
-          expires: "2999-12-31",
-        },
-      ],
+      findings: [{ fingerprint, owner: "security", reason: "Accepted test finding", expires: "2999-12-31" }],
     });
+    expect(result.suppressed.length).toBe(1);
+    expect(result.effectiveFindings.length).toBe(findings.length - 1);
+  });
 
-    assertEqual(result.suppressed.length, 1, "Should suppress baseline finding");
-    assertEqual(result.effectiveFindings.length, findings.length - 1, "Should leave non-baselined findings");
-  })) passed++;
-
-  total++;
-  if (await runTest("evaluates pull request policy", () => {
+  it("evaluates pull-request policy — fails on high/critical findings", () => {
     const { profile, rules } = resolvePolicyRules(undefined, "pull-request");
     const analyzer = new AttackAnalyzer();
-    const verdict = analyzer.generateVerdictWithStatus(findings, {
-      isComplete: true,
-      failedScanners: [],
-    });
+    const verdict = analyzer.generateVerdictWithStatus(findings, { isComplete: true, failedScanners: [] });
     const evaluation = evaluatePolicy({
       allFindings: findings,
       effectiveFindings: findings,
@@ -449,47 +406,35 @@ async function testPolicy(): Promise<boolean> {
         unavailableScanners: [],
         scannerStatuses: [],
         isComplete: true,
+        allScannersFailed: false,
       },
       profile,
       rules,
     });
+    expect(evaluation.status).toBe("failed");
+  });
+});
 
-    assertEqual(evaluation.status, "failed", "Pull request policy should fail on high/critical findings");
-  })) passed++;
+// ---------------------------------------------------------------------------
+// Auth, Replay, and Safety
+// ---------------------------------------------------------------------------
 
-  console.log(`  ${passed}/${total} tests passed`);
-  return passed === total;
-}
-
-async function testAuthAndSafety(): Promise<boolean> {
-  console.log("\n🔐 Auth, Replay, And Safety Tests:");
-  let passed = 0;
-  let total = 0;
-
-  total++;
-  if (await runTest("resolves multi-role auth contexts and session headers", async () => {
+describe("Auth, Replay, and Safety", () => {
+  it("resolves multi-role auth contexts and builds session headers", async () => {
     const contexts = await resolveAuthContexts({
       type: "none",
       roles: [
         { name: "anonymous", type: "none" },
-        {
-          name: "admin",
-          type: "session",
-          cookieName: "sid",
-          cookieValue: "abc123",
-          headers: { "X-Role": "admin" },
-        },
+        { name: "admin", type: "session", cookieName: "sid", cookieValue: "abc123", headers: { "X-Role": "admin" } },
       ],
     });
-
-    assertEqual(contexts.length, 2, "Should resolve two auth roles");
+    expect(contexts.length).toBe(2);
     const headers = buildAuthHeaders(contexts[1]);
-    assertEqual(headers.Cookie, "sid=abc123", "Should build session cookie header");
-    assertEqual(headers["X-Role"], "admin", "Should include custom role headers");
-  })) passed++;
+    expect(headers.Cookie).toBe("sid=abc123");
+    expect(headers["X-Role"]).toBe("admin");
+  });
 
-  total++;
-  if (await runTest("runs pre-scan auth hooks", async () => {
+  it("runs pre-scan auth hooks and reads token from JSON output", async () => {
     const contexts = await resolveAuthContexts({
       type: "jwt",
       preScan: {
@@ -498,39 +443,26 @@ async function testAuthAndSafety(): Promise<boolean> {
         output: "json",
       },
     });
+    expect(contexts[0].token).toBe("hook-token");
+    expect(contexts[0].headers?.["X-Trace"]).toBe("ci");
+  });
 
-    assertEqual(contexts[0].token, "hook-token", "Should read token from hook output");
-    assertEqual(contexts[0].headers?.["X-Trace"], "ci", "Should read headers from hook output");
-  })) passed++;
+  it("enforces host allowlists and rejects out-of-allowlist hosts", () => {
+    expect(() =>
+      enforceTargetSafety({ profile: "safe-active", allowedHosts: ["*.example.com"] }, "https://api.example.com", true)
+    ).not.toThrow();
 
-  total++;
-  if (await runTest("enforces host allowlists and active scan profiles", () => {
-    enforceTargetSafety(
-      { profile: "safe-active", allowedHosts: ["*.example.com"] },
-      "https://api.example.com",
-      true
-    );
+    expect(() =>
+      enforceTargetSafety({ profile: "safe-active", allowedHosts: ["api.example.com"] }, "https://evil.example.com", true)
+    ).toThrow();
 
-    let threw = false;
-    try {
-      enforceTargetSafety(
-        { profile: "safe-active", allowedHosts: ["api.example.com"] },
-        "https://evil.example.com",
-        true
-      );
-    } catch {
-      threw = true;
-    }
+    expect(allowsDestructiveMethod("DELETE", { profile: "safe-active" })).toBe(false);
+    expect(allowsDestructiveMethod("DELETE", { profile: "full-active" })).toBe(true);
+    expect(shouldRunZapActiveScan({ profile: "safe-active" })).toBe(false);
+    expect(shouldRunZapActiveScan({ profile: "full-active" })).toBe(true);
+  });
 
-    assert(threw, "Should reject hosts outside the allowlist");
-    assert(!allowsDestructiveMethod("DELETE", { profile: "safe-active" }), "safe-active should block DELETE");
-    assert(allowsDestructiveMethod("DELETE", { profile: "full-active" }), "full-active should allow DELETE");
-    assert(!shouldRunZapActiveScan({ profile: "safe-active" }), "safe-active should skip ZAP active scan");
-    assert(shouldRunZapActiveScan({ profile: "full-active" }), "full-active should run ZAP active scan");
-  })) passed++;
-
-  total++;
-  if (await runTest("AI executor sends cookie and custom auth headers", async () => {
+  it("AI executor sends cookie and custom auth headers", async () => {
     const originalFetch = globalThis.fetch;
     let capturedHeaders: Record<string, string> = {};
 
@@ -540,26 +472,20 @@ async function testAuthAndSafety(): Promise<boolean> {
     }) as typeof fetch;
 
     try {
-      const executor = new TestExecutor(createTestExecutionContext({
-        type: "session",
-        role: "admin",
-        cookieName: "sid",
-        cookieValue: "cookie-value",
-        headers: { "X-Test-Role": "admin" },
-      }));
+      const executor = new TestExecutor(
+        createTestExecutionContext({ type: "session", role: "admin", cookieName: "sid", cookieValue: "cookie-value", headers: { "X-Test-Role": "admin" } })
+      );
       const results = await executor.execute([createHeaderTestCase()]);
-
-      assertEqual(results.length, 1, "Should execute one test");
-      assertEqual(capturedHeaders.Cookie, "sid=cookie-value", "Should send session cookie");
-      assertEqual(capturedHeaders["X-Test-Role"], "admin", "Should send custom auth header");
+      expect(results.length).toBe(1);
+      expect(capturedHeaders.Cookie).toBe("sid=cookie-value");
+      expect(capturedHeaders["X-Test-Role"]).toBe("admin");
     } finally {
       globalThis.fetch = originalFetch;
     }
-  })) passed++;
+  });
 
-  total++;
-  if (await runTest("AI scanner replays saved tests without an available model", async () => {
-    const testDir = "./test-output";
+  it("AI scanner replays saved tests without a live model", async () => {
+    const testDir = "./test-output-replay";
     const replayPath = join(testDir, "ai-replay.json");
     mkdirSync(testDir, { recursive: true });
     writeFileSync(replayPath, JSON.stringify({ tests: [createHeaderTestCase()] }), "utf-8");
@@ -568,207 +494,97 @@ async function testAuthAndSafety(): Promise<boolean> {
     globalThis.fetch = (async () => new Response("ok", { status: 200 })) as typeof fetch;
 
     try {
-      const scanner = new AIScanner({
-        provider: "ollama",
-        model: "missing-model",
-        replayTests: replayPath,
-      });
+      const scanner = new AIScanner({ provider: "ollama", model: "missing-model", replayTests: replayPath });
       const findings = await scanner.run(createTestExecutionContext());
-
-      assert(findings.length > 0, "Replay should produce rule-based findings");
-      assertEqual(findings[0].role, "anonymous", "Replay findings should include role");
+      expect(findings.length).toBeGreaterThan(0);
+      expect(findings[0].role).toBe("anonymous");
     } finally {
       globalThis.fetch = originalFetch;
       rmSync(testDir, { recursive: true, force: true });
     }
-  })) passed++;
-
-  console.log(`  ${passed}/${total} tests passed`);
-  return passed === total;
-}
-
-async function testScannerFailureHandling(): Promise<boolean> {
-  console.log("\n🧱 Scanner Failure Handling Tests:");
-  let passed = 0;
-  let total = 0;
-
-  total++;
-  if (await runTest("marks required unavailable scanners as incomplete", async () => {
-    const orchestrator = new Orchestrator([
-      createMockScanner("Missing Tool", "static", () => {
-        throw new ScannerUnavailableError("tool missing", "Missing Tool");
-      }),
-    ], {
-      enabledCategories: ["static"],
-      requiredCategories: ["static"],
-      continueOnError: true,
-    });
-
-    const result = await orchestrator.runWithStatus(createTestExecutionContext());
-    assertEqual(result.isComplete, false, "Required unavailable scanner should make scan incomplete");
-    assert(result.failedScanners.includes("Missing Tool"), "Should list unavailable scanner as failed");
-    assert(result.unavailableScanners.includes("Missing Tool"), "Should list unavailable scanner separately");
-  })) passed++;
-
-  total++;
-  if (await runTest("marks optional unavailable scanners as skipped", async () => {
-    const orchestrator = new Orchestrator([
-      createMockScanner("Optional Tool", "static", () => {
-        throw new ScannerUnavailableError("tool missing", "Optional Tool");
-      }),
-    ], {
-      enabledCategories: ["static"],
-      requiredCategories: [],
-      continueOnError: true,
-    });
-
-    const result = await orchestrator.runWithStatus(createTestExecutionContext());
-    assertEqual(result.isComplete, true, "Optional unavailable scanner should not fail the run");
-    assertEqual(result.failedScanners.length, 0, "Optional unavailable scanner should not be failed");
-    assert(result.skippedScanners.includes("Optional Tool"), "Optional unavailable scanner should be skipped");
-  })) passed++;
-
-  total++;
-  if (await runTest("marks scanner errors as failed", async () => {
-    const orchestrator = new Orchestrator([
-      createMockScanner("Broken Scanner", "dynamic", () => {
-        throw new ScannerError("boom", "Broken Scanner");
-      }),
-    ], {
-      enabledCategories: ["dynamic"],
-      requiredCategories: ["dynamic"],
-      continueOnError: true,
-    });
-
-    const result = await orchestrator.runWithStatus(createTestExecutionContext());
-    assertEqual(result.isComplete, false, "Scanner errors should fail the run");
-    assert(result.failedScanners.includes("Broken Scanner"), "Should track failed scanner");
-    assertEqual(result.scannerStatuses[0].status, "failed", "Status should be failed");
-  })) passed++;
-
-  console.log(`  ${passed}/${total} tests passed`);
-  return passed === total;
-}
-
-async function testSeverityWeights(): Promise<boolean> {
-  console.log("\n⚖️ Severity Weight Tests:");
-  let passed = 0;
-  let total = 0;
-
-  const rawFindings = createMockRawFindings();
-  const findings = normalizeFindings(rawFindings);
-
-  total++;
-  if (await runTest("CRITICAL findings have highest risk", () => {
-    const critical = findings.filter(f => f.severity === "CRITICAL");
-    const others = findings.filter(f => f.severity !== "CRITICAL");
-
-    if (critical.length > 0 && others.length > 0) {
-      const avgCritical = critical.reduce((sum, f) => sum + f.riskScore, 0) / critical.length;
-      const avgOthers = others.reduce((sum, f) => sum + f.riskScore, 0) / others.length;
-      assert(avgCritical > avgOthers, "Critical should have higher avg risk");
-    }
-  })) passed++;
-
-  total++;
-  if (await runTest("exploitability affects risk score", () => {
-    // Injection vulnerabilities should have higher exploitability
-    const injections = findings.filter(f => f.category.toLowerCase().includes("injection"));
-    for (const finding of injections) {
-      assert(finding.exploitability > 0.5, "Injection should have high exploitability");
-    }
-  })) passed++;
-
-  console.log(`  ${passed}/${total} tests passed`);
-  return passed === total;
-}
-
-function createHeaderTestCase(): SecurityTestCase {
-  return {
-    name: "Missing Header - GET /health",
-    endpoint: "GET /health",
-    category: "Security Misconfiguration",
-    description: "Detect a missing response header",
-    request: {
-      method: "GET",
-      path: "/health",
-    },
-    expectedVulnerable: {
-      headerMissing: ["X-Test-Security"],
-    },
-  };
-}
-
-function createMockScanner(
-  name: string,
-  category: Scanner["category"],
-  run: Scanner["run"]
-): Scanner {
-  return {
-    name,
-    category,
-    run,
-  };
-}
-
-function createTestExecutionContext(auth?: ExecutionContext["auth"]): ExecutionContext {
-  return {
-    targetUrl: "http://localhost:3000",
-    environment: {
-      baseUrl: "http://localhost:3000",
-      images: [],
-      services: [],
-      managedByUs: false,
-    },
-    auth: auth || { type: "none", role: "anonymous" },
-    config: {
-      failOnSeverity: "HIGH",
-      safety: {
-        profile: "safe-active",
-        allowProductionTargets: false,
-        allowedHosts: [],
-        excludedPaths: [],
-        maxRequestsPerSecond: 0,
-        allowDestructiveMethods: false,
-      },
-    },
-  };
-}
-
-// Main test runner
-async function main(): Promise<void> {
-  console.log("═".repeat(60));
-  console.log("          Breach Gate Integration Tests");
-  console.log("═".repeat(60));
-
-  logger.setLevel("error"); // Suppress logs during tests
-
-  const results: boolean[] = [];
-
-  results.push(await testConfigLoader());
-  results.push(await testFindingsNormalizer());
-  results.push(await testReporting());
-  results.push(await testPolicy());
-  results.push(await testAuthAndSafety());
-  results.push(await testScannerFailureHandling());
-  results.push(await testSeverityWeights());
-
-  console.log("\n" + "═".repeat(60));
-
-  const allPassed = results.every(r => r);
-  const passedCount = results.filter(r => r).length;
-
-  if (allPassed) {
-    console.log(`✓ All test suites passed (${passedCount}/${results.length})`);
-    process.exit(0);
-  } else {
-    console.log(`✗ Some test suites failed (${passedCount}/${results.length} passed)`);
-    process.exit(1);
-  }
-}
-
-main().catch((err) => {
-  console.error("Test runner failed:", err);
-  process.exit(1);
+  });
 });
 
+// ---------------------------------------------------------------------------
+// Scanner Failure Handling
+// ---------------------------------------------------------------------------
+
+describe("Scanner Failure Handling", () => {
+  it("marks required unavailable scanners as incomplete", async () => {
+    const orchestrator = new Orchestrator(
+      [createMockScanner("Missing Tool", "static", () => { throw new ScannerUnavailableError("tool missing", "Missing Tool"); })],
+      { enabledCategories: ["static"], requiredCategories: ["static"], continueOnError: true }
+    );
+    const result = await orchestrator.runWithStatus(createTestExecutionContext());
+    expect(result.isComplete).toBe(false);
+    expect(result.failedScanners).toContain("Missing Tool");
+    expect(result.unavailableScanners).toContain("Missing Tool");
+  });
+
+  it("marks optional unavailable scanners as skipped (scan still complete)", async () => {
+    const orchestrator = new Orchestrator(
+      [createMockScanner("Optional Tool", "static", () => { throw new ScannerUnavailableError("tool missing", "Optional Tool"); })],
+      { enabledCategories: ["static"], requiredCategories: [], continueOnError: true }
+    );
+    const result = await orchestrator.runWithStatus(createTestExecutionContext());
+    expect(result.isComplete).toBe(true);
+    expect(result.failedScanners.length).toBe(0);
+    expect(result.skippedScanners).toContain("Optional Tool");
+  });
+
+  it("marks scanner runtime errors as failed", async () => {
+    const orchestrator = new Orchestrator(
+      [createMockScanner("Broken Scanner", "dynamic", () => { throw new ScannerError("boom", "Broken Scanner"); })],
+      { enabledCategories: ["dynamic"], requiredCategories: ["dynamic"], continueOnError: true }
+    );
+    const result = await orchestrator.runWithStatus(createTestExecutionContext());
+    expect(result.isComplete).toBe(false);
+    expect(result.failedScanners).toContain("Broken Scanner");
+    expect(result.scannerStatuses[0].status).toBe("failed");
+  });
+
+  it("returns INCONCLUSIVE when all optional scanners are unavailable", async () => {
+    const orchestrator = new Orchestrator(
+      [
+        createMockScanner("Tool A", "static", () => { throw new ScannerUnavailableError("not found", "Tool A"); }),
+        createMockScanner("Tool B", "dynamic", () => { throw new ScannerUnavailableError("not found", "Tool B"); }),
+      ],
+      { enabledCategories: ["static", "dynamic"], requiredCategories: [], continueOnError: true }
+    );
+    const result = await orchestrator.runWithStatus(createTestExecutionContext());
+    expect(result.allScannersFailed).toBe(true);
+
+    const analyzer = new AttackAnalyzer();
+    const verdict = analyzer.generateVerdictWithStatus([], {
+      isComplete: result.isComplete,
+      failedScanners: result.failedScanners,
+      allScannersFailed: result.allScannersFailed,
+    });
+    expect(verdict.verdict).toBe("INCONCLUSIVE");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Severity Weights
+// ---------------------------------------------------------------------------
+
+describe("Severity Weights", () => {
+  const findings = normalizeFindings(createMockRawFindings());
+
+  it("CRITICAL findings have higher avg risk than others", () => {
+    const critical = findings.filter((f) => f.severity === "CRITICAL");
+    const others = findings.filter((f) => f.severity !== "CRITICAL");
+    if (critical.length > 0 && others.length > 0) {
+      const avgCritical = critical.reduce((s, f) => s + f.riskScore, 0) / critical.length;
+      const avgOthers = others.reduce((s, f) => s + f.riskScore, 0) / others.length;
+      expect(avgCritical).toBeGreaterThan(avgOthers);
+    }
+  });
+
+  it("injection findings have exploitability above 0.5", () => {
+    const injections = findings.filter((f) => f.category.toLowerCase().includes("injection"));
+    for (const finding of injections) {
+      expect(finding.exploitability).toBeGreaterThan(0.5);
+    }
+  });
+});
