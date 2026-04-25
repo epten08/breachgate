@@ -215,6 +215,11 @@
               "description": "Path to save generated tests for future replay"
             }
           }
+        },
+        "plugins": {
+          "type": "array",
+          "description": "Paths to custom scanner plugin files (JS/TS). Each must export a default Scanner or named 'scanner' export.",
+          "items": { "type": "string" }
         }
       }
     },
@@ -333,6 +338,81 @@
           "type": "boolean",
           "description": "Include raw evidence in reports (request/response snippets)",
           "default": true
+        }
+      }
+    },
+    "notifications": {
+      "type": "object",
+      "description": "Post-scan notifications (Slack, GitHub, or generic webhook)",
+      "additionalProperties": false,
+      "properties": {
+        "slack": {
+          "type": "object",
+          "description": "Post a Slack message via incoming webhook",
+          "required": ["webhookUrl"],
+          "additionalProperties": false,
+          "properties": {
+            "webhookUrl": {
+              "type": "string",
+              "description": "Slack incoming webhook URL (supports ${ENV_VAR})"
+            },
+            "channel": {
+              "type": "string",
+              "description": "Override the default channel for the webhook"
+            },
+            "onlyOnFailure": {
+              "type": "boolean",
+              "description": "Only send notification when verdict is not SAFE",
+              "default": false
+            }
+          }
+        },
+        "github": {
+          "type": "object",
+          "description": "Create/update a GitHub issue or post a PR comment",
+          "required": ["token", "repo"],
+          "additionalProperties": false,
+          "properties": {
+            "token": {
+              "type": "string",
+              "description": "GitHub personal access token (supports ${ENV_VAR})"
+            },
+            "repo": {
+              "type": "string",
+              "description": "Repository in owner/repo format (e.g. my-org/my-api)"
+            },
+            "issueOnFailure": {
+              "type": "boolean",
+              "description": "Open or update a GitHub issue when verdict is UNSAFE or INCONCLUSIVE",
+              "default": false
+            },
+            "prComment": {
+              "type": "boolean",
+              "description": "Post a PR comment when GITHUB_PR_NUMBER env var is set",
+              "default": false
+            }
+          }
+        },
+        "webhook": {
+          "type": "object",
+          "description": "POST scan results to a generic HTTP endpoint",
+          "required": ["url"],
+          "additionalProperties": false,
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "Webhook endpoint URL"
+            },
+            "secret": {
+              "type": "string",
+              "description": "HMAC secret — if set, adds X-Breach-Gate-Signature: sha256=<hmac> header"
+            },
+            "onlyOnFailure": {
+              "type": "boolean",
+              "description": "Only send notification when verdict is not SAFE",
+              "default": false
+            }
+          }
         }
       }
     }

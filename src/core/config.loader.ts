@@ -105,6 +105,7 @@ export interface ScannersConfig {
     replayTests?: string;
     saveTests?: string;
   };
+  plugins?: string[];
 }
 
 export type ReportFormat = "markdown" | "json" | "sarif" | "html";
@@ -114,6 +115,39 @@ export interface ReportingConfig {
   formats: ReportFormat[];
   includeEvidence: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+export interface SlackNotificationConfig {
+  webhookUrl: string;
+  channel?: string;
+  onlyOnFailure?: boolean;
+}
+
+export interface GitHubNotificationConfig {
+  token: string;
+  repo: string;             // "owner/repo"
+  issueOnFailure?: boolean; // Open/update a GitHub issue on UNSAFE/INCONCLUSIVE
+  prComment?: boolean;      // Post a PR comment when GITHUB_PR_NUMBER env var is set
+}
+
+export interface WebhookNotificationConfig {
+  url: string;
+  secret?: string;          // If set, send X-Breach-Gate-Signature: sha256=<hmac>
+  onlyOnFailure?: boolean;
+}
+
+export interface NotificationConfig {
+  slack?: SlackNotificationConfig;
+  github?: GitHubNotificationConfig;
+  webhook?: WebhookNotificationConfig;
+}
+
+// ---------------------------------------------------------------------------
+// Top-level config
+// ---------------------------------------------------------------------------
 
 export interface SecurityBotConfig {
   version: string;
@@ -128,6 +162,7 @@ export interface SecurityBotConfig {
   safety?: SafetyConfig;
   policy?: PolicyConfig;
   reporting: ReportingConfig;
+  notifications?: NotificationConfig;
 }
 
 const DEFAULT_CONFIG: SecurityBotConfig = {
@@ -216,6 +251,7 @@ function mergeConfig(
       container: { ...defaults.scanners.container, ...overrides.scanners?.container },
       dynamic: { ...defaults.scanners.dynamic, ...overrides.scanners?.dynamic },
       ai: { ...defaults.scanners.ai, ...overrides.scanners?.ai },
+      plugins: overrides.scanners?.plugins ?? defaults.scanners.plugins,
     },
     thresholds: { ...defaults.thresholds, ...overrides.thresholds },
     safety: { ...defaults.safety, ...overrides.safety },
@@ -228,6 +264,7 @@ function mergeConfig(
       },
     } : defaults.policy,
     reporting: { ...defaults.reporting, ...overrides.reporting },
+    notifications: overrides.notifications ?? defaults.notifications,
   };
 }
 
