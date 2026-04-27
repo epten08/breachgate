@@ -14,36 +14,36 @@ target:
   endpoints:
     - path: /api/login
       method: POST
-      description: Login endpoint
+      description: "Login endpoint accepting username/password. Test for SQL injection in credentials, brute-force, and authentication bypass."
       body:
         username: test
         password: test
     - path: /api/users
       method: GET
-      description: Get user info
+      description: "Fetch user by id param. Test for IDOR (access other users by changing id), broken access control, and sensitive data exposure."
       params:
         id: admin
     - path: /api/search
       method: GET
-      description: Search with query param
+      description: "Search endpoint with q param. Test for SQL injection, XSS via reflected input, and NoSQL injection."
       params:
         q: test
     - path: /api/execute
       method: POST
-      description: Execute command
+      description: "Executes a shell command from the command body field. Test for OS command injection (e.g. ; id, && cat /etc/passwd), XSS, and input validation bypass."
       body:
         command: "echo hello"
     - path: /api/debug
       method: GET
-      description: Debug info endpoint
+      description: "Debug info endpoint. Test for sensitive data exposure, stack traces, environment variable leakage, and information disclosure."
     - path: /api/file
       method: GET
-      description: Read file
+      description: "Reads a file from the path param. Test for path traversal (../../etc/passwd), directory traversal, and arbitrary file read."
       params:
         path: /etc/passwd
     - path: /api/data
       method: GET
-      description: Get data by ID
+      description: "Fetches a database record by id param. Test for SQL injection (e.g. 1 OR 1=1, 1; DROP TABLE), IDOR, and error-based SQL injection."
       params:
         id: "1"
 
@@ -96,10 +96,9 @@ scanners:
 
   ai:
     enabled: true
-    provider: ollama
-    model: llama3:8b
-    baseUrl: http://localhost:11434
-    maxTests: 15
+    provider: anthropic
+    model: claude-sonnet-4-6
+    maxTests: 30
     deterministic: true
     # Save generated AI test cases for replayable CI failures.
     # saveTests: ./security-reports/ai-tests-{role}.json

@@ -93,7 +93,7 @@ npm run scan -- -t http://localhost:3000 -v
 | **Docker** | Container scanning, ZAP/Trivy via containers | [docker.com](https://www.docker.com/get-started) |
 | **Trivy** | Static analysis & container vulnerability scanning | [trivy docs](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) |
 | **OWASP ZAP** | Dynamic API security testing | [zaproxy.org](https://www.zaproxy.org/download/) |
-| **Ollama** | Local LLM for AI-assisted behavioral testing | [ollama.ai](https://ollama.ai/) |
+| **AI Provider** | LLM for AI-assisted behavioral testing — pick one: Anthropic, OpenAI, or Ollama (local) | See [AI Provider Setup](#ai-provider-setup) |
 
 ### Installing Prerequisites
 
@@ -101,6 +101,7 @@ npm run scan -- -t http://localhost:3000 -v
 ```bash
 winget install Docker.DockerDesktop
 winget install AquaSecurity.Trivy
+# Optional: only needed for local Ollama
 winget install Ollama.Ollama
 ```
 
@@ -108,6 +109,7 @@ winget install Ollama.Ollama
 ```bash
 brew install --cask docker
 brew install trivy
+# Optional: only needed for local Ollama
 brew install ollama
 ```
 
@@ -122,7 +124,7 @@ wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-k
 echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
 sudo apt-get update && sudo apt-get install trivy
 
-# Ollama
+# Optional: only needed for local Ollama
 curl -fsSL https://ollama.ai/install.sh | sh
 ```
 
@@ -460,9 +462,8 @@ scanners:
 
   ai:
     enabled: true
-    provider: ollama
-    model: llama3:8b
-    baseUrl: http://localhost:11434
+    provider: anthropic        # ollama | openai | anthropic
+    model: claude-haiku-4-5-20251001
     maxTests: 15
 
 thresholds:
@@ -501,26 +502,79 @@ The AI scanner is the **key differentiator**. It:
 
 When AI successfully exploits a vulnerability, it's a **confirmed attack path**.
 
-### Recommended Models
+## AI Provider Setup
 
-| System | Model | Command |
-|--------|-------|---------|
-| 16GB+ RAM | llama3:8b | `ollama pull llama3` |
-| 8GB RAM | llama3:8b-q4 | `ollama pull llama3:8b-q4_0` |
-| GPU available | codellama:13b | `ollama pull codellama:13b` |
+Breach Gate supports three AI providers. Pick one and configure it in `security.config.yml`.
 
-### Starting Ollama
+### Anthropic (recommended for CI/CD)
+
+No local server required. Get an API key from [console.anthropic.com](https://console.anthropic.com/settings/keys).
 
 ```bash
-# Start server
-ollama serve
+# .env
+ANTHROPIC_API_KEY=sk-ant-...
+```
 
-# Pull model
+```yaml
+# security.config.yml
+scanners:
+  ai:
+    enabled: true
+    provider: anthropic
+    model: claude-haiku-4-5-20251001   # fast and cost-effective
+    maxTests: 15
+```
+
+| Model | Speed | Best for |
+|-------|-------|----------|
+| `claude-haiku-4-5-20251001` | Fastest | CI pipelines, high test volume |
+| `claude-sonnet-4-6` | Balanced | Better reasoning on complex vulnerabilities |
+| `claude-opus-4-7` | Thorough | Highest quality, nightly or release scans |
+
+### OpenAI
+
+```bash
+# .env
+OPENAI_API_KEY=sk-...
+```
+
+```yaml
+scanners:
+  ai:
+    enabled: true
+    provider: openai
+    model: gpt-4o-mini    # or gpt-4o
+    maxTests: 15
+```
+
+### Ollama (local, no API key needed)
+
+Requires a running Ollama server. Good for air-gapped environments.
+
+```bash
+# Install and start
+ollama serve
 ollama pull llama3
 
 # Verify
 curl http://localhost:11434/api/tags
 ```
+
+```yaml
+scanners:
+  ai:
+    enabled: true
+    provider: ollama
+    model: llama3:8b
+    baseUrl: http://localhost:11434    # optional, this is the default
+    maxTests: 15
+```
+
+| RAM | Recommended model |
+|-----|------------------|
+| 16 GB+ | `llama3:8b` |
+| 8 GB | `llama3:8b-q4_0` |
+| GPU | `codellama:13b` |
 
 ## Demo
 
@@ -693,9 +747,18 @@ breach-gate scan --skip-dynamic
 ```bash
 ollama serve  # Start the server first
 ```
-Or skip AI testing:
+Or switch to a cloud provider (no local server needed) — see [AI Provider Setup](#ai-provider-setup).
+Or skip AI testing entirely:
 ```bash
 breach-gate scan --skip-ai
+```
+
+### "Anthropic API key not configured" / "OpenAI API key not configured"
+Set the key in your `.env` file or export it in your shell:
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+# or
+export OPENAI_API_KEY=sk-...
 ```
 
 ### Low-confidence findings

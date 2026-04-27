@@ -70,6 +70,44 @@ Respond with a JSON array of test cases in this format:
 ]`;
   }
 
+  buildEndpointTestPrompt(endpoint: EndpointInfo, count: number): string {
+    const params = endpoint.parameters?.length
+      ? `Query/path parameters: ${endpoint.parameters.join(", ")}`
+      : "";
+    const body = endpoint.requestBody ? `Request body: ${endpoint.requestBody}` : "";
+
+    return `Generate exactly ${count} security test cases for this API endpoint:
+
+Endpoint: ${endpoint.method} ${endpoint.path}
+${endpoint.summary ? `Description: ${endpoint.summary}` : ""}
+${params}
+${body}
+
+Focus on the most relevant attack categories given the endpoint description above.
+Use real attack payloads (e.g. SQL injection strings, path traversal sequences, script tags).
+For query-parameter endpoints use path like "/api/data?id=PAYLOAD" not body fields.
+
+Respond with ONLY a JSON array — no explanation, no markdown fences:
+[
+  {
+    "name": "Attack name - METHOD /path",
+    "endpoint": "${endpoint.method} ${endpoint.path}",
+    "category": "SQL Injection | Command Injection | Path Traversal | Cross-Site Scripting (XSS) | Broken Access Control | Information Disclosure | etc.",
+    "description": "One sentence describing what this test checks",
+    "request": {
+      "method": "${endpoint.method}",
+      "path": "/api/path?param=payload",
+      "body": { "field": "payload" }
+    },
+    "expectedVulnerable": {
+      "statusCodes": [200],
+      "bodyContains": ["keyword that proves exploitation"],
+      "headerMissing": ["X-Content-Type-Options"]
+    }
+  }
+]`;
+  }
+
   buildAbuseScenarioPrompt(endpoint: EndpointInfo): string {
     return `Analyze this API endpoint for potential abuse scenarios:
 

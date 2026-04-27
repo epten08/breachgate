@@ -30,10 +30,14 @@ export class AIClient {
   private config: AIConfig;
 
   constructor(config: AIConfig) {
+    // Spread config first, then apply ?? defaults. This way if config has
+    // temperature: undefined or maxTokens: undefined the defaults win instead
+    // of being silently wiped. JSON.stringify drops undefined fields, and
+    // Anthropic (unlike Ollama/OpenAI) rejects requests where max_tokens is absent.
     this.config = {
-      temperature: 0.7,
-      maxTokens: 2048,
       ...config,
+      temperature: config.temperature ?? 0.7,
+      maxTokens: config.maxTokens ?? 2048,
     };
   }
 
@@ -179,7 +183,7 @@ export class AIClient {
         },
         body: JSON.stringify({
           model: this.config.model,
-          max_tokens: this.config.maxTokens,
+          max_tokens: this.config.maxTokens ?? 2048,
           system: systemMessage?.content,
           messages: chatMessages.map((m) => ({
             role: m.role,

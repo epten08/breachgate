@@ -74,13 +74,15 @@ You can configure the paths explicitly:
 scanners:
   ai:
     enabled: true
-    provider: ollama
-    model: llama3:8b
+    provider: anthropic          # ollama | openai | anthropic
+    model: claude-haiku-4-5-20251001
     deterministic: true
     temperature: 0
     maxTokens: 2048
     saveTests: ./security-reports/ai-tests-{role}.json
 ```
+
+For Ollama substitute `provider: ollama`, `model: llama3:8b`, and add `baseUrl: http://localhost:11434`. For OpenAI use `provider: openai` and `model: gpt-4o-mini`. Cloud providers read their API key from `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` in the environment; no `baseUrl` is needed.
 
 Replay a previous artifact to reproduce a CI failure without regenerating tests:
 
@@ -88,8 +90,8 @@ Replay a previous artifact to reproduce a CI failure without regenerating tests:
 scanners:
   ai:
     enabled: true
-    provider: ollama
-    model: llama3:8b
+    provider: anthropic          # ollama | openai | anthropic
+    model: claude-haiku-4-5-20251001
     replayTests: ./security-reports/ai-tests-user.json
 ```
 

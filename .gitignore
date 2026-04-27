@@ -4,6 +4,12 @@ dist
 nul
 requirements.md
 .claude
+
+# Security scan output — contains potentially sensitive vulnerability details
+security-reports/
+*.sarif
+ai-tests*.json
+
 # Prevent stray TypeScript compiler output from polluting src/
 src/**/*.js
 src/**/*.js.map

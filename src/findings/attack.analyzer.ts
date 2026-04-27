@@ -16,6 +16,7 @@ export type BreachType =
   | "data_exfiltration"      // Attacker can steal sensitive data
   | "privilege_escalation"   // Attacker can gain elevated access
   | "authentication_bypass"  // Attacker can bypass auth entirely
+  | "session_hijacking"      // Attacker can hijack user sessions (XSS, CSRF)
   | "none";                  // No confirmed breach
 
 export interface ConfirmedBreach {
@@ -562,6 +563,19 @@ export class AttackAnalyzer {
       };
     }
 
+    // XSS / CSRF / client-side injection
+    if (category.includes("xss") || category.includes("cross-site scripting") ||
+        category.includes("csrf") || category.includes("cross-site request") ||
+        category.includes("script injection")) {
+      return {
+        type: "session_hijacking",
+        endpoint,
+        capability: `${authPrefix}client-side script injection on ${endpoint} enabling session hijacking`,
+        finding,
+        evidence: finding.evidence,
+      };
+    }
+
     return { type: "none", endpoint, capability: "", finding, evidence: "" };
   }
 
@@ -618,6 +632,7 @@ export class AttackAnalyzer {
       const dataLeak = breaches.find(b => b.type === "data_exfiltration");
       const authBypass = breaches.find(b => b.type === "authentication_bypass");
       const privEsc = breaches.find(b => b.type === "privilege_escalation");
+      const sessionHijack = breaches.find(b => b.type === "session_hijacking");
 
       if (rce) {
         operationalConclusion = rce.capability;
@@ -627,6 +642,8 @@ export class AttackAnalyzer {
         operationalConclusion = authBypass.capability;
       } else if (privEsc) {
         operationalConclusion = privEsc.capability;
+      } else if (sessionHijack) {
+        operationalConclusion = sessionHijack.capability;
       } else {
         operationalConclusion = breaches[0].capability;
       }
@@ -657,6 +674,11 @@ export class AttackAnalyzer {
       // Confirmed breach = FAIL. Not a high score, but proof of compromise.
       verdict = "UNSAFE";
       reason = operationalConclusion;
+    } else if (confirmedExploits.length > 0) {
+      // Confirmed exploit that didn't classify into a named breach type — still UNSAFE.
+      verdict = "UNSAFE";
+      const types = [...new Set(confirmedExploits.map(f => f.category))];
+      reason = `Confirmed exploitation: ${types.slice(0, 2).join(", ")}. Active attacks succeeded during testing.`;
     } else if (criticalFindings.some(f => this.calculateImpact(f) >= 0.9)) {
       // Unconfirmed but high-impact (RCE-level) - still unsafe
       verdict = "UNSAFE";

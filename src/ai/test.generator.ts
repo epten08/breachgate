@@ -55,19 +55,31 @@ export class TestGenerator {
     const endpoints = this.promptBuilder.extractEndpoints();
     logger.debug(`Found ${endpoints.length} endpoints to test`);
 
+    // Generate per endpoint so each prompt+response stays well within token limits.
+    // A single call for all endpoints at once easily exceeds 2048 tokens and causes
+    // truncated JSON that falls back to the minimal fallback set.
+    const testsPerEndpoint = Math.max(2, Math.ceil(maxTests / endpoints.length));
     const systemPrompt = this.promptBuilder.buildSystemPrompt();
-    const prompt = this.promptBuilder.buildTestGenerationPrompt(endpoints);
+    const allTests: SecurityTestCase[] = [];
 
-    try {
-      const response = await this.client.generate(prompt, systemPrompt);
-      const testCases = this.parseTestCases(response);
+    for (const endpoint of endpoints) {
+      if (allTests.length >= maxTests) break;
+      const count = Math.min(testsPerEndpoint, maxTests - allTests.length);
 
-      // Limit to maxTests
-      return testCases.slice(0, maxTests);
-    } catch (err) {
-      logger.warn(`Failed to generate test cases: ${(err as Error).message}`);
-      return this.getFallbackTestCases(endpoints);
+      const prompt = this.promptBuilder.buildEndpointTestPrompt(endpoint, count);
+      try {
+        const response = await this.client.generate(prompt, systemPrompt);
+        const tests = this.parseTestCases(response);
+        allTests.push(...tests.slice(0, count));
+        logger.debug(`Generated ${Math.min(tests.length, count)} tests for ${endpoint.method} ${endpoint.path}`);
+      } catch (err) {
+        logger.warn(`Failed to generate tests for ${endpoint.method} ${endpoint.path}: ${(err as Error).message}`);
+        allTests.push(...this.getFallbackTestsForEndpoint(endpoint));
+      }
     }
+
+    logger.debug(`Total AI test cases generated: ${allTests.length}`);
+    return allTests.slice(0, maxTests);
   }
 
   async analyzeEndpoint(endpoint: EndpointInfo): Promise<AbuseAnalysis> {
@@ -121,8 +133,7 @@ export class TestGenerator {
       });
     } catch (err) {
       logger.warn(`Failed to parse test cases: ${(err as Error).message}`);
-      // Try fallback: use configured endpoints directly
-      return this.getFallbackTestCases(this.promptBuilder.extractEndpoints());
+      return [];
     }
   }
 
@@ -174,69 +185,120 @@ export class TestGenerator {
     }
   }
 
-  private getFallbackTestCases(endpoints: EndpointInfo[]): SecurityTestCase[] {
-    // Generate basic test cases without AI
-    const testCases: SecurityTestCase[] = [];
+  private getFallbackTestsForEndpoint(endpoint: EndpointInfo): SecurityTestCase[] {
+    const tests: SecurityTestCase[] = [];
+    const method = endpoint.method;
+    const path = endpoint.path;
+    const label = `${method} ${path}`;
+    const summary = endpoint.summary?.toLowerCase() ?? "";
 
-    for (const endpoint of endpoints.slice(0, 5)) {
-      // SQL Injection test
-      if (endpoint.path.includes(":id") || endpoint.path.includes("{id}")) {
-        testCases.push({
-          name: `SQL Injection - ${endpoint.method} ${endpoint.path}`,
-          endpoint: `${endpoint.method} ${endpoint.path}`,
-          category: "Injection",
-          description: "Test for SQL injection via ID parameter",
-          request: {
-            method: endpoint.method,
-            path: endpoint.path.replace(/:id|\{id\}/g, "1' OR '1'='1"),
-          },
-          expectedVulnerable: {
-            statusCodes: [200],
-            bodyContains: ["error", "sql", "syntax"],
-          },
-        });
-      }
-
-      // Auth bypass test
-      if (endpoint.security?.length || endpoint.path.includes("admin")) {
-        testCases.push({
-          name: `Auth Bypass - ${endpoint.method} ${endpoint.path}`,
-          endpoint: `${endpoint.method} ${endpoint.path}`,
-          category: "Broken Authentication",
-          description: "Test accessing protected endpoint without auth",
-          request: {
-            method: endpoint.method,
-            path: endpoint.path.replace(/:id|\{id\}/g, "1"),
-            headers: {},
-          },
-          expectedVulnerable: {
-            statusCodes: [200, 201],
-          },
-        });
-      }
-
-      // XSS test for POST/PUT
-      if (["POST", "PUT", "PATCH"].includes(endpoint.method)) {
-        testCases.push({
-          name: `XSS - ${endpoint.method} ${endpoint.path}`,
-          endpoint: `${endpoint.method} ${endpoint.path}`,
-          category: "XSS",
-          description: "Test for reflected XSS in request body",
-          request: {
-            method: endpoint.method,
-            path: endpoint.path.replace(/:id|\{id\}/g, "1"),
-            body: {
-              name: "<script>alert('xss')</script>",
-              email: "test@test.com",
-            },
-          },
-          expectedVulnerable: {
-            bodyContains: ["<script>"],
-          },
-        });
-      }
+    // SQL / data injection — query-param and body variants
+    if (summary.includes("sql") || summary.includes("injection") || summary.includes("data") || summary.includes("id")) {
+      const injPayload = "1' OR '1'='1";
+      tests.push({
+        name: `SQL Injection - ${label}`,
+        endpoint: label,
+        category: "SQL Injection",
+        description: "Test for SQL injection via id parameter",
+        request: {
+          method,
+          path: `${path}?id=${encodeURIComponent(injPayload)}`,
+        },
+        expectedVulnerable: {
+          statusCodes: [200],
+          bodyContains: ["sql", "query", "select", "error"],
+        },
+      });
     }
 
-    return testCases;
+    // Command injection — body endpoints that mention execute/command
+    if (summary.includes("command") || summary.includes("exec") || ["POST", "PUT"].includes(method)) {
+      tests.push({
+        name: `Command Injection - ${label}`,
+        endpoint: label,
+        category: "Command Injection",
+        description: "Test for OS command injection via command field",
+        request: {
+          method,
+          path,
+          body: { command: "echo hello; cat /etc/passwd" },
+        },
+        expectedVulnerable: {
+          statusCodes: [200],
+          bodyContains: ["executed", "output", "command"],
+        },
+      });
+    }
+
+    // Path traversal
+    if (summary.includes("file") || summary.includes("path") || summary.includes("traversal")) {
+      tests.push({
+        name: `Path Traversal - ${label}`,
+        endpoint: label,
+        category: "Path Traversal",
+        description: "Test for directory traversal via path parameter",
+        request: {
+          method,
+          path: `${path}?path=../../../etc/passwd`,
+        },
+        expectedVulnerable: {
+          statusCodes: [200],
+          bodyContains: ["path", "file", "content", "traversal"],
+        },
+      });
+    }
+
+    // IDOR / broken access control
+    if (summary.includes("user") || summary.includes("idor") || summary.includes("access")) {
+      tests.push({
+        name: `IDOR - ${label}`,
+        endpoint: label,
+        category: "Broken Access Control",
+        description: "Test for insecure direct object reference via id manipulation",
+        request: {
+          method,
+          path: `${path}?id=admin`,
+        },
+        expectedVulnerable: {
+          statusCodes: [200],
+          bodyContains: ["password", "role", "email", "user"],
+        },
+      });
+    }
+
+    // XSS — reflected input
+    if (["POST", "PUT", "PATCH"].includes(method) || summary.includes("xss") || summary.includes("search")) {
+      tests.push({
+        name: `XSS - ${label}`,
+        endpoint: label,
+        category: "Cross-Site Scripting (XSS)",
+        description: "Test for reflected XSS via user-controlled input",
+        request: {
+          method,
+          path: ["GET"].includes(method) ? `${path}?q=<script>alert(1)</script>` : path,
+          body: ["POST", "PUT", "PATCH"].includes(method)
+            ? { input: "<script>alert(1)</script>" }
+            : undefined,
+        },
+        expectedVulnerable: {
+          bodyContains: ["<script>"],
+        },
+      });
+    }
+
+    // Info disclosure — always check debug-style endpoints
+    tests.push({
+      name: `Info Disclosure - ${label}`,
+      endpoint: label,
+      category: "Information Disclosure",
+      description: "Test for sensitive data or debug information in response",
+      request: { method, path },
+      expectedVulnerable: {
+        statusCodes: [200],
+        bodyContains: ["password", "secret", "token", "debug", "stack", "internal"],
+      },
+    });
+
+    return tests;
   }
 }
