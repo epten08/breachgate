@@ -30,6 +30,7 @@ import {
   enforceTargetSafety,
   shouldRunAiActiveTests,
 } from "../../safety/safety.js";
+import { sendNotifications } from "../../notifications/notifier.js";
 
 export function createRunCommand(): Command {
   const cmd = new Command("scan")
@@ -301,7 +302,7 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
     configureAiReplayArtifacts(config, isCiMode, authContexts.length);
 
     // Create scanners based on config
-    const scanners = createScanners(config);
+    const scanners = await createScanners(config);
     const enabledCategories = getEnabledCategories(config);
 
     // Run orchestrator with status tracking
@@ -446,6 +447,9 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
     }
   }
 
+  // Send notifications (non-blocking — failures are logged as warnings)
+  await sendNotifications(config.notifications, verdict, scanResult.findings, targetUrlForReports);
+
   return { exitCode };
 }
 
@@ -532,7 +536,7 @@ function combineExitCodes(current: number, next: number): number {
   return 0;
 }
 
-function createScanners(config: SecurityBotConfig): Scanner[] {
+async function createScanners(config: SecurityBotConfig): Promise<Scanner[]> {
   const scanners: Scanner[] = [
     new TrivyStaticScanner(),
     new TrivyImageScanner(),
@@ -554,6 +558,18 @@ function createScanners(config: SecurityBotConfig): Scanner[] {
         saveTests: config.scanners.ai.saveTests,
       })
     );
+  }
+
+  // Load external plugin scanners
+  for (const pluginPath of config.scanners.plugins ?? []) {
+    const resolvedPath = resolve(pluginPath);
+    const { pathToFileURL } = await import("url");
+    const mod = await import(pathToFileURL(resolvedPath).href) as { default?: Scanner; scanner?: Scanner };
+    const plugin = mod.default ?? mod.scanner;
+    if (!plugin || typeof plugin.run !== "function") {
+      throw new ConfigError(`Plugin at ${pluginPath} must export a default Scanner or a 'scanner' named export`);
+    }
+    scanners.push(plugin);
   }
 
   return scanners;
