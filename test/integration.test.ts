@@ -149,15 +149,34 @@ const reportConfig = {
 // Config Loader
 // ---------------------------------------------------------------------------
 
+const FIXTURE_CONFIG_DIR = "./test-output-config-loader";
+const FIXTURE_CONFIG_PATH = join(FIXTURE_CONFIG_DIR, "security.config.yml");
+const FIXTURE_CONFIG_YAML = `version: "1.0"
+target:
+  baseUrl: http://localhost:3000
+scanners:
+  static:
+    enabled: false
+  container:
+    enabled: false
+  dynamic:
+    enabled: false
+  ai:
+    enabled: false
+`;
+
 describe("Config Loader", () => {
   it("loads default config when no file specified", () => {
+    // DEFAULT_CONFIG has target:{} with no baseUrl — check shape only, not validity
     const config = loadConfig();
     expect(config).toBeTruthy();
     expect(config.target).toBeDefined();
   });
 
   it("validates config structure", () => {
-    const config = loadConfig();
+    mkdirSync(FIXTURE_CONFIG_DIR, { recursive: true });
+    writeFileSync(FIXTURE_CONFIG_PATH, FIXTURE_CONFIG_YAML);
+    const config = loadConfig(FIXTURE_CONFIG_PATH);
     expect(() => validateConfig(config)).not.toThrow();
     expect(config.scanners).toBeDefined();
   });
