@@ -4,6 +4,7 @@ dist
 nul
 requirements.md
 .claude
+security.config.yml
 
 # Security scan output — contains potentially sensitive vulnerability details
 security-reports/

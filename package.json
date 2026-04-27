@@ -13,7 +13,6 @@
     "scripts/generate-sbom.mjs",
     "docs/ci/templates",
     "README.md",
-    "security.config.yml",
     ".env.example",
     ".breach-gate-baseline.example.yml"
   ],
@@ -46,9 +45,7 @@
     "chalk": "^5.6.2",
     "commander": "^14.0.3",
     "dotenv": "^17.2.4",
-    "express": "^5.2.1",
     "openapi3-ts": "^4.5.0",
-    "typescript": "^5.9.3",
     "uuid": "^14.0.0",
     "yaml": "^2.8.2"
   },
@@ -58,8 +55,10 @@
     "@typescript-eslint/parser": "^8.0.0",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^10.0.0",
+    "express": "^5.2.1",
     "prettier": "^3.0.0",
     "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
     "vitest": "^2.0.0"
   }
 }
