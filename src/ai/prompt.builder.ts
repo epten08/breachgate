@@ -87,6 +87,22 @@ Focus on the most relevant attack categories given the endpoint description abov
 Use real attack payloads (e.g. SQL injection strings, path traversal sequences, script tags).
 For query-parameter endpoints use path like "/api/data?id=PAYLOAD" not body fields.
 
+CRITICAL RULES for expectedVulnerable — violations cause false positives:
+1. statusCodes: ONLY include 200 or 201. A 2xx response proves the attack succeeded.
+   NEVER include 401, 403, 404, 422 — these mean the server correctly rejected the request.
+2. bodyContains: List strings that are UNIQUE PROOF of exploitation, such as:
+   - Exact SQL error text: "syntax error", "You have an error in your SQL"
+   - The injected payload reflected verbatim: "<script>alert", "1=1"
+   - A specific DB object name leaked: "information_schema", "pg_catalog"
+   - A secret field that should never appear: "password_hash", "private_key"
+   FORBIDDEN generic words (appear in every normal API response — do NOT use):
+   "id", "success", "error", "message", "data", "status", "result",
+   "balance", "approved", "created", "updated", "name", "type", "code"
+3. headerMissing: ONLY list actual browser-security response headers:
+   "x-content-type-options", "x-frame-options", "strict-transport-security"
+   NEVER include protocol headers: "WWW-Authenticate", "Authorization",
+   "X-RateLimit-Limit", "Retry-After", "Content-Security-Policy"
+
 Respond with ONLY a JSON array — no explanation, no markdown fences:
 [
   {
@@ -101,8 +117,8 @@ Respond with ONLY a JSON array — no explanation, no markdown fences:
     },
     "expectedVulnerable": {
       "statusCodes": [200],
-      "bodyContains": ["keyword that proves exploitation"],
-      "headerMissing": ["X-Content-Type-Options"]
+      "bodyContains": ["exact exploitation evidence string"],
+      "headerMissing": ["x-content-type-options"]
     }
   }
 ]`;

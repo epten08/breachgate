@@ -170,13 +170,19 @@ export class TestEvaluator {
       };
     }
 
-    // Security headers
+    // Security headers — only report when there is no other substantive finding.
+    // All criteria being header-miss only means no actual exploitation occurred.
     if (criteriaStr.includes("security header")) {
-      return {
-        type: "Security Misconfiguration",
-        severity: "MEDIUM",
-        recommendation: "Add security headers: X-Content-Type-Options, X-Frame-Options, Strict-Transport-Security.",
-      };
+      const substantive = matchedCriteria.filter(
+        (c) => !c.startsWith("Missing security header")
+      );
+      if (substantive.length === 0) {
+        return {
+          type: "Security Misconfiguration",
+          severity: "MEDIUM",
+          recommendation: "Add security headers: X-Content-Type-Options, X-Frame-Options, Strict-Transport-Security.",
+        };
+      }
     }
 
     // Stack trace / error disclosure
@@ -215,8 +221,12 @@ export class TestEvaluator {
       };
     }
 
-    // Generic vulnerability - if executor flagged it, trust the executor
-    if (matchedCriteria.length > 0) {
+    // Generic vulnerability — only fire when there is substantive evidence beyond header misses.
+    // Pure header-miss findings are already handled above.
+    const substantiveCriteria = matchedCriteria.filter(
+      (c) => !c.startsWith("Missing security header")
+    );
+    if (substantiveCriteria.length > 0) {
       return {
         type: testCase.category || "Security Vulnerability",
         severity: "MEDIUM",
@@ -224,12 +234,7 @@ export class TestEvaluator {
       };
     }
 
-    // Last resort: if test case indicated it should be vulnerable, create a finding
-    return {
-      type: testCase.category || "Potential Security Issue",
-      severity: "LOW",
-      recommendation: "Manual review recommended for this endpoint.",
-    };
+    return null;
   }
 
   private buildEvidence(result: TestResult): string {

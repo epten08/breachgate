@@ -134,56 +134,68 @@ export class TestExecutor {
   ): { isVulnerable: boolean; matchedCriteria: string[] } {
     const matchedCriteria: string[] = [];
     const expected = testCase.expectedVulnerable;
+    const isSuccess = status >= 200 && status < 300;
 
-    // Check status codes
-    if (expected.statusCodes?.includes(status)) {
+    // A 404 with "route not found" means the router rejected a path-based payload — not a vulnerability.
+    if (status === 404 && /route.*not.*found|could not be found/i.test(body)) {
+      return { isVulnerable: false, matchedCriteria: [] };
+    }
+
+    // A 401/403 means auth/authz is working — never flag these as Broken Access Control.
+    const isAuthRejection = status === 401 || status === 403;
+
+    // Status code match only counts when the attack succeeded (2xx).
+    // A 401/422 response when 200 was expected means the server correctly rejected the attempt.
+    if (expected.statusCodes?.includes(status) && isSuccess) {
       matchedCriteria.push(`Status code ${status} matches expected`);
     }
 
-    // Check body contains
-    if (expected.bodyContains) {
-      for (const needle of expected.bodyContains) {
-        if (body.toLowerCase().includes(needle.toLowerCase())) {
-          matchedCriteria.push(`Body contains "${needle}"`);
+    // Body-contains and header-missing checks only apply on 2xx responses.
+    // Checking these on 401/404/422 generates false positives because error bodies
+    // contain generic terms ("id", "success") and error responses naturally lack
+    // protocol headers (WWW-Authenticate, Authorization) that are not security headers.
+    if (isSuccess) {
+      if (expected.bodyContains) {
+        for (const needle of expected.bodyContains) {
+          if (body.toLowerCase().includes(needle.toLowerCase())) {
+            matchedCriteria.push(`Body contains "${needle}"`);
+          }
         }
       }
-    }
 
-    // Check missing headers
-    if (expected.headerMissing) {
-      for (const header of expected.headerMissing) {
-        if (!headers[header.toLowerCase()]) {
-          matchedCriteria.push(`Missing security header: ${header}`);
+      if (expected.headerMissing) {
+        for (const header of expected.headerMissing) {
+          if (!headers[header.toLowerCase()]) {
+            matchedCriteria.push(`Missing security header: ${header}`);
+          }
         }
       }
-    }
 
-    // Additional vulnerability indicators
-    const vulnIndicators = [
-      { pattern: /sql.*error|syntax.*error|mysql|postgresql|sqlite/i, name: "SQL error" },
-      { pattern: /stack.*trace|exception|error.*at\s+\w+\./i, name: "Stack trace" },
-      { pattern: /<script>|javascript:/i, name: "Unescaped script" },
-      { pattern: /password|secret|api.?key|token/i, name: "Sensitive data" },
-    ];
-
-    for (const indicator of vulnIndicators) {
-      if (indicator.pattern.test(body)) {
-        matchedCriteria.push(`Response contains ${indicator.name}`);
-      }
-    }
-
-    // Check for missing security headers on successful responses
-    if (status >= 200 && status < 300) {
+      // Auto-check core security headers on successful responses only.
       const securityHeaders = [
         "x-content-type-options",
         "x-frame-options",
         "strict-transport-security",
       ];
-
       for (const header of securityHeaders) {
         if (!headers[header] && !expected.headerMissing?.includes(header)) {
-          // Don't double count if already in expected
           matchedCriteria.push(`Missing security header: ${header}`);
+        }
+      }
+    }
+
+    // Definitive exploitation indicators — check on all responses.
+    // These are unambiguous evidence of a real vulnerability regardless of status.
+    if (!isAuthRejection) {
+      const vulnIndicators = [
+        { pattern: /sql.*error|syntax.*error|mysql.*error|postgresql.*error|sqlite.*error/i, name: "SQL error" },
+        { pattern: /stack.*trace|exception.*at\s+\w+\./i, name: "Stack trace" },
+        { pattern: /<script[\s>]|javascript:/i, name: "Unescaped script" },
+        { pattern: /password\s*[:=]|api[_-]?key\s*[:=]|secret\s*[:=]/i, name: "Sensitive data" },
+      ];
+      for (const indicator of vulnIndicators) {
+        if (indicator.pattern.test(body)) {
+          matchedCriteria.push(`Response contains ${indicator.name}`);
         }
       }
     }
