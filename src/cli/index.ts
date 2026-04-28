@@ -2,6 +2,7 @@
 
 import { config } from "dotenv";
 import { Command } from "commander";
+import { createRequire } from "module";
 import { createRunCommand } from "./commands/run.js";
 import { createInitCommand } from "./commands/init.js";
 import { createDoctorCommand } from "./commands/doctor.js";
@@ -10,7 +11,8 @@ import { logger } from "../core/logger.js";
 // Load environment variables from .env file without adding noise to CI logs.
 config({ quiet: true });
 
-const VERSION = "1.0.0";
+const require = createRequire(import.meta.url);
+const { version: VERSION } = require("../../package.json") as { version: string };
 
 async function main(): Promise<void> {
   const program = new Command();
