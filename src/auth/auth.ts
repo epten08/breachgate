@@ -16,17 +16,19 @@ export async function resolveAuthContexts(auth?: AuthConfig): Promise<AuthContex
     return [{ type: "none", role: auth.role || "anonymous", headers: auth.headers }];
   }
 
-  return [await resolveRole(auth, {
-    name: auth.role || auth.type,
-    type: auth.type,
-    token: auth.token,
-    apiKey: auth.apiKey,
-    headerName: auth.headerName,
-    cookieName: auth.cookieName,
-    cookieValue: auth.cookieValue,
-    headers: auth.headers,
-    preScan: auth.preScan,
-  })];
+  return [
+    await resolveRole(auth, {
+      name: auth.role || auth.type,
+      type: auth.type,
+      token: auth.token,
+      apiKey: auth.apiKey,
+      headerName: auth.headerName,
+      cookieName: auth.cookieName,
+      cookieValue: auth.cookieValue,
+      headers: auth.headers,
+      preScan: auth.preScan,
+    }),
+  ];
 }
 
 export function buildAuthHeaders(auth?: AuthContext): Record<string, string> {
@@ -66,9 +68,8 @@ export function buildAuthHeaders(auth?: AuthContext): Record<string, string> {
 
 async function resolveRole(auth: AuthConfig, role: AuthRoleConfig): Promise<AuthContext> {
   const type = role.type || auth.type;
-  const hookValues = role.preScan || auth.preScan
-    ? await runAuthHook(role.preScan || auth.preScan!)
-    : {};
+  const hookValues =
+    role.preScan || auth.preScan ? await runAuthHook(role.preScan || auth.preScan!) : {};
 
   return {
     type,
@@ -123,7 +124,10 @@ function readString(value: Record<string, unknown>, field: string): string | und
   return typeof current === "string" ? current : undefined;
 }
 
-function readRecord(value: Record<string, unknown>, field: string): Record<string, string> | undefined {
+function readRecord(
+  value: Record<string, unknown>,
+  field: string
+): Record<string, string> | undefined {
   const current = value[field];
   if (!current || typeof current !== "object" || Array.isArray(current)) {
     return undefined;

@@ -16,7 +16,11 @@ export function createWatchCommand(): Command {
     });
 }
 
-async function runWatch(options: { config?: string; interval: string; verbose?: boolean }): Promise<void> {
+async function runWatch(options: {
+  config?: string;
+  interval: string;
+  verbose?: boolean;
+}): Promise<void> {
   const intervalMs = Math.max(10, parseInt(options.interval, 10)) * 1000;
 
   let config;
@@ -63,12 +67,14 @@ async function runWatch(options: { config?: string; interval: string; verbose?: 
         new ZapApiScanner(),
       ];
       if (config.scanners.ai.enabled && config.scanners.ai.provider) {
-        scanners.push(new AIScanner({
-          provider: config.scanners.ai.provider,
-          model: config.scanners.ai.model || "llama3",
-          baseUrl: config.scanners.ai.baseUrl,
-          maxTests: config.scanners.ai.maxTests,
-        }));
+        scanners.push(
+          new AIScanner({
+            provider: config.scanners.ai.provider,
+            model: config.scanners.ai.model || "llama3",
+            baseUrl: config.scanners.ai.baseUrl,
+            maxTests: config.scanners.ai.maxTests,
+          })
+        );
       }
 
       const ctx = {
@@ -84,11 +90,11 @@ async function runWatch(options: { config?: string; interval: string; verbose?: 
       const current = result.findings;
 
       // Diff against previous scan
-      const prevIds = new Set(previousFindings.map(f => f.id));
-      const currIds = new Set(current.map(f => f.id));
+      const prevIds = new Set(previousFindings.map((f) => f.id));
+      const currIds = new Set(current.map((f) => f.id));
 
-      const newFindings = current.filter(f => !prevIds.has(f.id));
-      const resolvedFindings = previousFindings.filter(f => !currIds.has(f.id));
+      const newFindings = current.filter((f) => !prevIds.has(f.id));
+      const resolvedFindings = previousFindings.filter((f) => !currIds.has(f.id));
 
       if (newFindings.length > 0) {
         logger.warn(`[Scan #${scanCount}] ${newFindings.length} NEW finding(s):`);

@@ -42,7 +42,7 @@ export class GraphQLScanner implements Scanner {
       try {
         const resp = await this.post(url.toString(), { query: "{ __typename }" }, ctx);
         if (resp.ok) {
-          const body = await resp.json() as GraphQLResponse;
+          const body = (await resp.json()) as GraphQLResponse;
           if (body.data !== undefined || body.errors !== undefined) {
             graphqlUrl = url.toString();
             logger.debug(`GraphQL endpoint found: ${graphqlUrl}`);
@@ -87,24 +87,26 @@ export class GraphQLScanner implements Scanner {
   ): Promise<{ enabled: boolean; queryFields: string[] }> {
     try {
       const resp = await this.post(url, { query: INTROSPECTION_QUERY }, ctx);
-      const body = await resp.json() as GraphQLResponse;
+      const body = (await resp.json()) as GraphQLResponse;
 
       if (body.data && (body.data as Record<string, unknown>).__schema) {
         findings.push({
           source: this.name,
           category: "Information Disclosure",
-          description: "GraphQL introspection is enabled in production, exposing full schema to attackers.",
+          description:
+            "GraphQL introspection is enabled in production, exposing full schema to attackers.",
           endpoint: `POST ${new URL(url).pathname}`,
           severityHint: "MEDIUM",
           evidence: `Introspection query returned full __schema at ${url}`,
-          reference: "Disable introspection in production. Set introspection: false in your GraphQL server config.",
+          reference:
+            "Disable introspection in production. Set introspection: false in your GraphQL server config.",
         });
 
         // Extract query field names for use in subsequent probes.
         const schema = (body.data as Record<string, unknown>).__schema as {
           queryType?: { fields?: Array<{ name: string }> };
         };
-        const fields = schema.queryType?.fields?.map(f => f.name) ?? [];
+        const fields = schema.queryType?.fields?.map((f) => f.name) ?? [];
         return { enabled: true, queryFields: fields };
       }
     } catch {
@@ -113,22 +115,28 @@ export class GraphQLScanner implements Scanner {
     return { enabled: false, queryFields: [] };
   }
 
-  private async runDepthProbe(url: string, ctx: ExecutionContext, findings: RawFinding[]): Promise<void> {
+  private async runDepthProbe(
+    url: string,
+    ctx: ExecutionContext,
+    findings: RawFinding[]
+  ): Promise<void> {
     try {
       const start = Date.now();
       const resp = await this.post(url, { query: DEEP_NESTING_QUERY }, ctx);
       const elapsed = Date.now() - start;
-      const body = await resp.json() as GraphQLResponse;
+      const body = (await resp.json()) as GraphQLResponse;
 
       if (elapsed > 3000 || (body.data !== undefined && !body.errors?.length)) {
         findings.push({
           source: this.name,
           category: "Security Misconfiguration",
-          description: "GraphQL endpoint accepts deeply nested queries without depth limiting, enabling query complexity DoS.",
+          description:
+            "GraphQL endpoint accepts deeply nested queries without depth limiting, enabling query complexity DoS.",
           endpoint: `POST ${new URL(url).pathname}`,
           severityHint: "MEDIUM",
           evidence: `Deep-nesting query responded in ${elapsed}ms without a depth-limit error.`,
-          reference: "Implement query depth limiting (e.g., graphql-depth-limit) and query complexity analysis.",
+          reference:
+            "Implement query depth limiting (e.g., graphql-depth-limit) and query complexity analysis.",
         });
       }
     } catch {
@@ -136,18 +144,23 @@ export class GraphQLScanner implements Scanner {
     }
   }
 
-  private async runFieldSuggestion(url: string, ctx: ExecutionContext, findings: RawFinding[]): Promise<void> {
+  private async runFieldSuggestion(
+    url: string,
+    ctx: ExecutionContext,
+    findings: RawFinding[]
+  ): Promise<void> {
     // GraphQL servers often suggest correct field names in error messages even with introspection off.
     try {
       const resp = await this.post(url, { query: "{ usr { id } }" }, ctx);
-      const body = await resp.json() as GraphQLResponse;
-      const errorMsg = body.errors?.map(e => e.message).join(" ") ?? "";
+      const body = (await resp.json()) as GraphQLResponse;
+      const errorMsg = body.errors?.map((e) => e.message).join(" ") ?? "";
 
       if (/did you mean/i.test(errorMsg)) {
         findings.push({
           source: this.name,
           category: "Information Disclosure",
-          description: "GraphQL field suggestions are enabled — attackers can enumerate schema fields even without introspection.",
+          description:
+            "GraphQL field suggestions are enabled — attackers can enumerate schema fields even without introspection.",
           endpoint: `POST ${new URL(url).pathname}`,
           severityHint: "LOW",
           evidence: `Error message contains field suggestion: "${errorMsg.slice(0, 200)}"`,
@@ -170,18 +183,20 @@ export class GraphQLScanner implements Scanner {
 
     try {
       const resp = await this.post(url, { query: injectionQuery }, ctx);
-      const body = await resp.json() as GraphQLResponse;
+      const body = (await resp.json()) as GraphQLResponse;
       const bodyStr = JSON.stringify(body);
 
       if (/sql.*error|syntax.*error|mysql|postgresql/i.test(bodyStr)) {
         findings.push({
           source: this.name,
           category: "SQL Injection",
-          description: "GraphQL query argument is passed directly to a SQL query without sanitization.",
+          description:
+            "GraphQL query argument is passed directly to a SQL query without sanitization.",
           endpoint: `POST ${new URL(url).pathname}`,
           severityHint: "CRITICAL",
           evidence: `SQL error in response to injection payload in ${field}(id) argument.`,
-          reference: "Use parameterized queries or an ORM that prevents raw SQL. Never concatenate GraphQL arguments into SQL.",
+          reference:
+            "Use parameterized queries or an ORM that prevents raw SQL. Never concatenate GraphQL arguments into SQL.",
         });
       }
     } catch {
@@ -196,14 +211,18 @@ export class GraphQLScanner implements Scanner {
     queryFields: string[]
   ): Promise<void> {
     // Try to query user IDs 1–5 and check if different user data is returned.
-    const field = queryFields.find(f => /user|account|profile/i.test(f)) ?? queryFields[0];
+    const field = queryFields.find((f) => /user|account|profile/i.test(f)) ?? queryFields[0];
     if (!field) return;
 
     const responses = new Set<string>();
     for (let id = 1; id <= 3; id++) {
       try {
-        const resp = await this.post(url, { query: `{ ${field}(id: ${id}) { id email username } }` }, ctx);
-        const body = await resp.json() as GraphQLResponse;
+        const resp = await this.post(
+          url,
+          { query: `{ ${field}(id: ${id}) { id email username } }` },
+          ctx
+        );
+        const body = (await resp.json()) as GraphQLResponse;
         if (body.data && !body.errors?.length) {
           responses.add(JSON.stringify(body.data));
         }
@@ -216,11 +235,13 @@ export class GraphQLScanner implements Scanner {
       findings.push({
         source: this.name,
         category: "Broken Access Control",
-        description: "GraphQL query returns other users' data by varying the ID argument without authorization checks (IDOR).",
+        description:
+          "GraphQL query returns other users' data by varying the ID argument without authorization checks (IDOR).",
         endpoint: `POST ${new URL(url).pathname}`,
         severityHint: "HIGH",
         evidence: `${field}(id: 1..3) returned distinct user records without auth validation.`,
-        reference: "Scope all GraphQL resolvers to the authenticated user. Never resolve arbitrary IDs without ownership checks.",
+        reference:
+          "Scope all GraphQL resolvers to the authenticated user. Never resolve arbitrary IDs without ownership checks.",
       });
     }
   }

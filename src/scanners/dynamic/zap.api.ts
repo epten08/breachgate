@@ -81,11 +81,7 @@ export class ZapApiScanner implements Scanner {
       return findings;
     } catch (err) {
       logger.scanner(this.name, "error", (err as Error).message);
-      throw new ScannerError(
-        `ZAP scan failed: ${(err as Error).message}`,
-        this.name,
-        err as Error
-      );
+      throw new ScannerError(`ZAP scan failed: ${(err as Error).message}`, this.name, err as Error);
     } finally {
       await this.cleanup();
     }
@@ -94,7 +90,9 @@ export class ZapApiScanner implements Scanner {
   private async checkZapAvailable(): Promise<"api" | "docker" | "none"> {
     // First check if ZAP is already running on the expected port
     const hasApiKey = !!this.zapApiKey;
-    logger.info(`Checking ZAP on port ${this.zapPort} (API key: ${hasApiKey ? "configured" : "not set"})`);
+    logger.info(
+      `Checking ZAP on port ${this.zapPort} (API key: ${hasApiKey ? "configured" : "not set"})`
+    );
 
     try {
       const controller = new AbortController();
@@ -114,7 +112,9 @@ export class ZapApiScanner implements Scanner {
         logger.info(`ZAP API detected: version ${JSON.stringify(data)}`);
         return "api";
       } else if (response.status === 403) {
-        logger.warn("ZAP API returned 403 - API key required. Set ZAP_API_KEY environment variable.");
+        logger.warn(
+          "ZAP API returned 403 - API key required. Set ZAP_API_KEY environment variable."
+        );
       } else {
         logger.debug(`ZAP API responded with status ${response.status}`);
       }
@@ -126,13 +126,19 @@ export class ZapApiScanner implements Scanner {
     // Check for ZAP Docker image
     const hasDocker = await checkCommand("docker");
     if (hasDocker) {
-      const imageCheck = await runProcess("docker", ["images", "-q", "ghcr.io/zaproxy/zaproxy"], { timeout: 10000 });
+      const imageCheck = await runProcess("docker", ["images", "-q", "ghcr.io/zaproxy/zaproxy"], {
+        timeout: 10000,
+      });
       if (imageCheck.stdout.trim()) {
         logger.info("ZAP Docker image available, will use Docker mode");
         return "docker";
       }
       // Also check for older image name
-      const oldImageCheck = await runProcess("docker", ["images", "-q", "owasp/zap2docker-stable"], { timeout: 10000 });
+      const oldImageCheck = await runProcess(
+        "docker",
+        ["images", "-q", "owasp/zap2docker-stable"],
+        { timeout: 10000 }
+      );
       if (oldImageCheck.stdout.trim()) {
         logger.info("ZAP Docker image (owasp/zap2docker-stable) available");
         return "docker";
@@ -156,7 +162,9 @@ export class ZapApiScanner implements Scanner {
 
     // Determine which image to use
     let zapImage = "ghcr.io/zaproxy/zaproxy:stable";
-    const imageCheck = await runProcess("docker", ["images", "-q", "ghcr.io/zaproxy/zaproxy"], { timeout: 10000 });
+    const imageCheck = await runProcess("docker", ["images", "-q", "ghcr.io/zaproxy/zaproxy"], {
+      timeout: 10000,
+    });
     if (!imageCheck.stdout.trim()) {
       zapImage = "owasp/zap2docker-stable";
     }
@@ -164,16 +172,25 @@ export class ZapApiScanner implements Scanner {
     const result = await runProcess(
       "docker",
       [
-        "run", "-d", "--rm",
-        "-p", `${this.zapPort}:${this.zapPort}`,
+        "run",
+        "-d",
+        "--rm",
+        "-p",
+        `${this.zapPort}:${this.zapPort}`,
         "--add-host=host.docker.internal:host-gateway",
         zapImage,
-        "zap.sh", "-daemon",
-        "-port", String(this.zapPort),
-        "-host", "0.0.0.0",
-        "-config", "api.disablekey=true",
-        "-config", "api.addrs.addr.name=.*",
-        "-config", "api.addrs.addr.regex=true"
+        "zap.sh",
+        "-daemon",
+        "-port",
+        String(this.zapPort),
+        "-host",
+        "0.0.0.0",
+        "-config",
+        "api.disablekey=true",
+        "-config",
+        "api.addrs.addr.name=.*",
+        "-config",
+        "api.addrs.addr.regex=true",
       ],
       { timeout: 30000 }
     );
@@ -263,10 +280,7 @@ export class ZapApiScanner implements Scanner {
 
       throw new Error("ZAP failed to start within timeout");
     } catch (err) {
-      throw new ScannerError(
-        `Failed to start ZAP: ${(err as Error).message}`,
-        this.name
-      );
+      throw new ScannerError(`Failed to start ZAP: ${(err as Error).message}`, this.name);
     }
   }
 
@@ -284,20 +298,21 @@ export class ZapApiScanner implements Scanner {
     // Access the base URL first, carrying configured auth where possible.
     await this.sendRequestViaZap("GET", targetUrl, authHeaders);
 
-    const scopedEndpoints = (ctx.endpoints && ctx.endpoints.length > 0
-      ? ctx.endpoints
-      : this.extractOpenApiEndpoints(ctx))
-      .filter((endpoint) => {
-        if (isPathExcluded(endpoint.path, ctx.config.safety)) {
-          logger.debug(`Skipping ZAP endpoint ${endpoint.path}: excluded by safety profile`);
-          return false;
-        }
-        if (endpoint.method && !allowsDestructiveMethod(endpoint.method, ctx.config.safety)) {
-          logger.debug(`Skipping ZAP endpoint ${endpoint.method} ${endpoint.path}: method blocked by safety profile`);
-          return false;
-        }
-        return true;
-      });
+    const scopedEndpoints = (
+      ctx.endpoints && ctx.endpoints.length > 0 ? ctx.endpoints : this.extractOpenApiEndpoints(ctx)
+    ).filter((endpoint) => {
+      if (isPathExcluded(endpoint.path, ctx.config.safety)) {
+        logger.debug(`Skipping ZAP endpoint ${endpoint.path}: excluded by safety profile`);
+        return false;
+      }
+      if (endpoint.method && !allowsDestructiveMethod(endpoint.method, ctx.config.safety)) {
+        logger.debug(
+          `Skipping ZAP endpoint ${endpoint.method} ${endpoint.path}: method blocked by safety profile`
+        );
+        return false;
+      }
+      return true;
+    });
 
     // If we have configured or OpenAPI endpoints, add them to ZAP for scanning
     if (scopedEndpoints.length > 0) {
@@ -357,14 +372,18 @@ export class ZapApiScanner implements Scanner {
       baseurl: targetUrl,
     });
 
-    const alerts = ((alertsResponse?.alerts || []) as ZapAlert[])
-      .filter((alert) => !this.isAlertExcluded(alert, ctx));
+    const alerts = ((alertsResponse?.alerts || []) as ZapAlert[]).filter(
+      (alert) => !this.isAlertExcluded(alert, ctx)
+    );
     logger.info(`ZAP found ${alerts.length} alerts`);
 
     return this.parseAlerts(alerts, ctx.auth?.role);
   }
 
-  private async zapRequest(path: string, params?: Record<string, string>): Promise<Record<string, unknown>> {
+  private async zapRequest(
+    path: string,
+    params?: Record<string, string>
+  ): Promise<Record<string, unknown>> {
     const url = this.buildZapUrl(path, params);
 
     try {
@@ -372,7 +391,7 @@ export class ZapApiScanner implements Scanner {
       if (!response.ok) {
         throw new Error(`ZAP API error: ${response.status}`);
       }
-      return await response.json() as Record<string, unknown>;
+      return (await response.json()) as Record<string, unknown>;
     } catch (err) {
       logger.debug(`ZAP request failed: ${(err as Error).message}`);
       return {};
@@ -509,7 +528,8 @@ export class ZapApiScanner implements Scanner {
     if (name.includes("access")) return "Broken Access Control";
     if (name.includes("exposure") || name.includes("disclosure")) return "Sensitive Data Exposure";
     if (name.includes("header")) return "Security Misconfiguration";
-    if (name.includes("ssl") || name.includes("tls") || name.includes("certificate")) return "TLS/SSL Issue";
+    if (name.includes("ssl") || name.includes("tls") || name.includes("certificate"))
+      return "TLS/SSL Issue";
 
     return "Security Vulnerability";
   }

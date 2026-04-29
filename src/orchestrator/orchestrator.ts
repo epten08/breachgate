@@ -67,8 +67,8 @@ export class Orchestrator {
    * Run scanners and return both findings and scanner status.
    */
   async runWithStatus(ctx: ExecutionContext): Promise<ScanResult> {
-    const enabledScanners = this.scanners.filter(
-      (s) => this.options.enabledCategories?.includes(s.category)
+    const enabledScanners = this.scanners.filter((s) =>
+      this.options.enabledCategories?.includes(s.category)
     );
 
     if (enabledScanners.length === 0) {
@@ -97,7 +97,9 @@ export class Orchestrator {
     logger.info(`Scan complete: ${normalized.length} findings`);
 
     if (summary.failed.length > 0) {
-      logger.warn(`${summary.failed.length} required scanner(s) did not complete: ${summary.failed.join(", ")}`);
+      logger.warn(
+        `${summary.failed.length} required scanner(s) did not complete: ${summary.failed.join(", ")}`
+      );
     }
 
     if (summary.skipped.length > 0) {
@@ -236,15 +238,9 @@ export class Orchestrator {
     skipped: string[];
     unavailable: string[];
   } {
-    const completed = statuses
-      .filter((s) => s.status === "completed")
-      .map((s) => s.name);
-    const skipped = statuses
-      .filter((s) => s.status === "skipped")
-      .map((s) => s.name);
-    const unavailable = statuses
-      .filter((s) => s.status === "unavailable")
-      .map((s) => s.name);
+    const completed = statuses.filter((s) => s.status === "completed").map((s) => s.name);
+    const skipped = statuses.filter((s) => s.status === "skipped").map((s) => s.name);
+    const unavailable = statuses.filter((s) => s.status === "unavailable").map((s) => s.name);
     const failed = statuses
       .filter((s) => s.status === "failed" || (s.status === "unavailable" && s.required))
       .map((s) => s.name);

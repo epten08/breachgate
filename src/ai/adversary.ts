@@ -92,7 +92,7 @@ export class AIClient {
         throw new Error(`Ollama API error: ${response.status}`);
       }
 
-      const data = await response.json() as {
+      const data = (await response.json()) as {
         message: { content: string };
         model: string;
         prompt_eval_count?: number;
@@ -141,7 +141,7 @@ export class AIClient {
         throw new Error(`OpenAI API error: ${response.status} - ${error}`);
       }
 
-      const data = await response.json() as {
+      const data = (await response.json()) as {
         choices: { message: { content: string } }[];
         model: string;
         usage: { prompt_tokens: number; completion_tokens: number };
@@ -197,7 +197,7 @@ export class AIClient {
         throw new Error(`Anthropic API error: ${response.status} - ${error}`);
       }
 
-      const data = await response.json() as {
+      const data = (await response.json()) as {
         content: { text: string }[];
         model: string;
         usage: { input_tokens: number; output_tokens: number };

@@ -71,9 +71,13 @@ export class TestGenerator {
         const response = await this.client.generate(prompt, systemPrompt);
         const tests = this.parseTestCases(response);
         allTests.push(...tests.slice(0, count));
-        logger.debug(`Generated ${Math.min(tests.length, count)} tests for ${endpoint.method} ${endpoint.path}`);
+        logger.debug(
+          `Generated ${Math.min(tests.length, count)} tests for ${endpoint.method} ${endpoint.path}`
+        );
       } catch (err) {
-        logger.warn(`Failed to generate tests for ${endpoint.method} ${endpoint.path}: ${(err as Error).message}`);
+        logger.warn(
+          `Failed to generate tests for ${endpoint.method} ${endpoint.path}: ${(err as Error).message}`
+        );
         allTests.push(...this.getFallbackTestsForEndpoint(endpoint));
       }
     }
@@ -124,12 +128,7 @@ export class TestGenerator {
 
       // Validate structure
       return parsed.filter((tc) => {
-        return (
-          tc.name &&
-          tc.endpoint &&
-          tc.request?.method &&
-          tc.request?.path
-        );
+        return tc.name && tc.endpoint && tc.request?.method && tc.request?.path;
       });
     } catch (err) {
       logger.warn(`Failed to parse test cases: ${(err as Error).message}`);
@@ -193,7 +192,12 @@ export class TestGenerator {
     const summary = endpoint.summary?.toLowerCase() ?? "";
 
     // SQL / data injection — query-param and body variants
-    if (summary.includes("sql") || summary.includes("injection") || summary.includes("data") || summary.includes("id")) {
+    if (
+      summary.includes("sql") ||
+      summary.includes("injection") ||
+      summary.includes("data") ||
+      summary.includes("id")
+    ) {
       const injPayload = "1' OR '1'='1";
       tests.push({
         name: `SQL Injection - ${label}`,
@@ -212,7 +216,11 @@ export class TestGenerator {
     }
 
     // Command injection — body endpoints that mention execute/command
-    if (summary.includes("command") || summary.includes("exec") || ["POST", "PUT"].includes(method)) {
+    if (
+      summary.includes("command") ||
+      summary.includes("exec") ||
+      ["POST", "PUT"].includes(method)
+    ) {
       tests.push({
         name: `Command Injection - ${label}`,
         endpoint: label,
@@ -267,7 +275,11 @@ export class TestGenerator {
     }
 
     // XSS — reflected input
-    if (["POST", "PUT", "PATCH"].includes(method) || summary.includes("xss") || summary.includes("search")) {
+    if (
+      ["POST", "PUT", "PATCH"].includes(method) ||
+      summary.includes("xss") ||
+      summary.includes("search")
+    ) {
       tests.push({
         name: `XSS - ${label}`,
         endpoint: label,
@@ -287,7 +299,12 @@ export class TestGenerator {
     }
 
     // SSRF — endpoints accepting URLs, webhooks, or file paths (task 5)
-    if (summary.includes("url") || summary.includes("webhook") || summary.includes("import") || summary.includes("fetch")) {
+    if (
+      summary.includes("url") ||
+      summary.includes("webhook") ||
+      summary.includes("import") ||
+      summary.includes("fetch")
+    ) {
       tests.push({
         name: `SSRF - ${label}`,
         endpoint: label,
@@ -295,9 +312,14 @@ export class TestGenerator {
         description: "Test for server-side request forgery via attacker-controlled URL parameter",
         request: {
           method,
-          path: ["GET"].includes(method) ? `${path}?url=http://169.254.169.254/latest/meta-data` : path,
+          path: ["GET"].includes(method)
+            ? `${path}?url=http://169.254.169.254/latest/meta-data`
+            : path,
           body: ["POST", "PUT", "PATCH"].includes(method)
-            ? { url: "http://169.254.169.254/latest/meta-data", webhook: "http://169.254.169.254/latest/meta-data" }
+            ? {
+                url: "http://169.254.169.254/latest/meta-data",
+                webhook: "http://169.254.169.254/latest/meta-data",
+              }
             : undefined,
         },
         expectedVulnerable: {

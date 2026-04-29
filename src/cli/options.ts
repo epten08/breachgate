@@ -14,7 +14,7 @@ export interface ScanOptions {
   differential?: boolean;
   verbose?: boolean;
   quiet?: boolean;
-  ci?: boolean;  // Deterministic CI mode - minimal output
+  ci?: boolean; // Deterministic CI mode - minimal output
   skipStatic?: boolean;
   skipContainer?: boolean;
   skipDynamic?: boolean;

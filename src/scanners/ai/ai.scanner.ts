@@ -59,9 +59,12 @@ export class AIScanner implements Scanner {
 
         if (!isAvailable) {
           const hints: Record<string, string> = {
-            ollama: "Start Ollama: ollama serve. Then pull a model: ollama pull llama3:8b. See https://ollama.ai",
-            openai: "Set the OPENAI_API_KEY environment variable. Get a key at https://platform.openai.com/api-keys",
-            anthropic: "Set the ANTHROPIC_API_KEY environment variable. Get a key at https://console.anthropic.com",
+            ollama:
+              "Start Ollama: ollama serve. Then pull a model: ollama pull llama3:8b. See https://ollama.ai",
+            openai:
+              "Set the OPENAI_API_KEY environment variable. Get a key at https://platform.openai.com/api-keys",
+            anthropic:
+              "Set the ANTHROPIC_API_KEY environment variable. Get a key at https://console.anthropic.com",
           };
           throw new ScannerUnavailableError(
             `AI provider ${this.config.provider} is not available`,
@@ -86,7 +89,9 @@ export class AIScanner implements Scanner {
       // Execute tests
       const executor = new TestExecutor(ctx);
       const results = await executor.execute(testCases);
-      logger.debug(`Executed ${results.length} tests, ${results.filter((r) => r.isVulnerable).length} potential vulnerabilities`);
+      logger.debug(
+        `Executed ${results.length} tests, ${results.filter((r) => r.isVulnerable).length} potential vulnerabilities`
+      );
 
       // Evaluate results
       const evaluator = new TestEvaluator(ctx, isAvailable ? aiConfig : undefined);
@@ -109,20 +114,23 @@ export class AIScanner implements Scanner {
       throw new ScannerUnavailableError(`AI replay artifact not found: ${path}`, this.name);
     }
 
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as SecurityTestCase[] | {
-      tests?: SecurityTestCase[];
-    };
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as
+      | SecurityTestCase[]
+      | {
+          tests?: SecurityTestCase[];
+        };
     const tests = Array.isArray(parsed) ? parsed : parsed.tests;
 
     if (!Array.isArray(tests)) {
-      throw new ScannerUnavailableError(`AI replay artifact does not contain a tests array: ${path}`, this.name);
+      throw new ScannerUnavailableError(
+        `AI replay artifact does not contain a tests array: ${path}`,
+        this.name
+      );
     }
 
-    return tests.filter((testCase) =>
-      testCase.name &&
-      testCase.endpoint &&
-      testCase.request?.method &&
-      testCase.request?.path
+    return tests.filter(
+      (testCase) =>
+        testCase.name && testCase.endpoint && testCase.request?.method && testCase.request?.path
     );
   }
 
@@ -137,14 +145,22 @@ export class AIScanner implements Scanner {
       mkdirSync(dir, { recursive: true });
     }
 
-    writeFileSync(path, JSON.stringify({
-      schemaVersion: "1.0",
-      generatedAt: new Date().toISOString(),
-      targetUrl: ctx.targetUrl,
-      role: ctx.auth?.role,
-      deterministic: this.config.deterministic === true,
-      tests,
-    }, null, 2), "utf-8");
+    writeFileSync(
+      path,
+      JSON.stringify(
+        {
+          schemaVersion: "1.0",
+          generatedAt: new Date().toISOString(),
+          targetUrl: ctx.targetUrl,
+          role: ctx.auth?.role,
+          deterministic: this.config.deterministic === true,
+          tests,
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
     logger.info(`Saved AI replay artifact: ${path}`);
   }
 
@@ -155,5 +171,10 @@ export class AIScanner implements Scanner {
 }
 
 function sanitizeRole(role: string): string {
-  return role.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "") || "role";
+  return (
+    role
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-|-$/g, "") || "role"
+  );
 }

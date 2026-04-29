@@ -105,7 +105,8 @@ export function resolvePolicyRules(
   differentialOverride = false
 ): { profile: string; rules: PolicyRules } {
   const profile = profileOverride || policyConfig?.profile || "main";
-  const defaults = DEFAULT_POLICY_PROFILES[profile as PolicyProfileName] ?? DEFAULT_POLICY_PROFILES.main;
+  const defaults =
+    DEFAULT_POLICY_PROFILES[profile as PolicyProfileName] ?? DEFAULT_POLICY_PROFILES.main;
   const configured = policyConfig?.profiles?.[profile] ?? {};
 
   return {
@@ -115,7 +116,9 @@ export function resolvePolicyRules(
       ...configured,
       differentialOnly: differentialOverride
         ? true
-        : policyConfig?.differentialOnly ?? configured.differentialOnly ?? defaults.differentialOnly,
+        : (policyConfig?.differentialOnly ??
+          configured.differentialOnly ??
+          defaults.differentialOnly),
     },
   };
 }
@@ -164,13 +167,13 @@ export function fingerprintFinding(finding: Finding): string {
     stableParts.push(finding.role);
   }
 
-  return createHash("sha256")
-    .update(stableParts.join("|"))
-    .digest("hex")
-    .slice(0, 16);
+  return createHash("sha256").update(stableParts.join("|")).digest("hex").slice(0, 16);
 }
 
-export function applyBaseline(findings: Finding[], baseline?: BaselineFile): {
+export function applyBaseline(
+  findings: Finding[],
+  baseline?: BaselineFile
+): {
   effectiveFindings: Finding[];
   suppressed: SuppressedFinding[];
   expired: ExpiredBaselineEntry[];
@@ -232,7 +235,9 @@ export function evaluatePolicy(options: {
   }
 
   if (options.rules.failOnScannerFailure && options.scanResult.failedScanners.length > 0) {
-    reasons.push(`Required scanners failed or were unavailable: ${options.scanResult.failedScanners.join(", ")}`);
+    reasons.push(
+      `Required scanners failed or were unavailable: ${options.scanResult.failedScanners.join(", ")}`
+    );
   }
 
   if (options.rules.failOnConfirmedExploit && options.verdict.confirmedExploits.length > 0) {
@@ -240,7 +245,9 @@ export function evaluatePolicy(options: {
   }
 
   if (criticalCount > options.rules.maxCritical) {
-    reasons.push(`${criticalCount} critical finding(s) exceed policy maximum ${options.rules.maxCritical}`);
+    reasons.push(
+      `${criticalCount} critical finding(s) exceed policy maximum ${options.rules.maxCritical}`
+    );
   }
 
   if (highCount > options.rules.maxHigh) {

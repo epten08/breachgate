@@ -61,7 +61,9 @@ export class TrivyImageScanner implements Scanner {
 
     if (!hasTrivy && hasDocker) {
       // Check if trivy image is available
-      const imageCheck = await runProcess("docker", ["images", "-q", "aquasec/trivy"], { timeout: 10000 });
+      const imageCheck = await runProcess("docker", ["images", "-q", "aquasec/trivy"], {
+        timeout: 10000,
+      });
       if (!imageCheck.stdout.trim()) {
         throw new ScannerUnavailableError(
           "Trivy Docker image not found. Pull with: docker pull aquasec/trivy",
@@ -92,10 +94,7 @@ export class TrivyImageScanner implements Scanner {
     }
 
     if (failures.length === images.length) {
-      throw new ScannerError(
-        `All image scans failed: ${failures.join("; ")}`,
-        this.name
-      );
+      throw new ScannerError(`All image scans failed: ${failures.join("; ")}`, this.name);
     }
 
     return allFindings;
@@ -110,12 +109,17 @@ export class TrivyImageScanner implements Scanner {
       result = await runProcess(
         "docker",
         [
-          "run", "--rm",
-          "-v", "/var/run/docker.sock:/var/run/docker.sock",
+          "run",
+          "--rm",
+          "-v",
+          "/var/run/docker.sock:/var/run/docker.sock",
           "aquasec/trivy",
-          "image", image,
-          "--format", "json",
-          "--scanners", "vuln"
+          "image",
+          image,
+          "--format",
+          "json",
+          "--scanners",
+          "vuln",
         ],
         { timeout: 600000 }
       );
@@ -128,10 +132,7 @@ export class TrivyImageScanner implements Scanner {
     }
 
     if (result.exitCode !== 0 && !result.stdout) {
-      throw new ScannerError(
-        `Image scan failed: ${result.stderr}`,
-        this.name
-      );
+      throw new ScannerError(`Image scan failed: ${result.stderr}`, this.name);
     }
 
     return this.parseResults(result.stdout, image);
@@ -157,7 +158,8 @@ export class TrivyImageScanner implements Scanner {
         findings.push({
           source: this.name,
           category: this.mapCategory(target.Type),
-          description: vuln.Title || vuln.Description || `${vuln.VulnerabilityID} in ${vuln.PkgName}`,
+          description:
+            vuln.Title || vuln.Description || `${vuln.VulnerabilityID} in ${vuln.PkgName}`,
           severityHint: vuln.Severity,
           evidence: `${vuln.PkgName}@${vuln.InstalledVersion} in ${image} (${target.Target})`,
           cve: vuln.VulnerabilityID,

@@ -40,34 +40,62 @@ async function runWizard(options: InitOptions): Promise<void> {
 
   try {
     // 1. Target URL
-    const targetUrl = (await rl.question("1. Target URL (e.g. http://localhost:3000): ")).trim() || "http://localhost:3000";
+    const targetUrl =
+      (await rl.question("1. Target URL (e.g. http://localhost:3000): ")).trim() ||
+      "http://localhost:3000";
 
     // 2. Auth type
-    const authTypeRaw = (await rl.question("2. Auth type [none/jwt/apikey/session] (default: none): ")).trim().toLowerCase();
+    const authTypeRaw = (
+      await rl.question("2. Auth type [none/jwt/apikey/session] (default: none): ")
+    )
+      .trim()
+      .toLowerCase();
     const authType = ["jwt", "apikey", "session"].includes(authTypeRaw) ? authTypeRaw : "none";
 
     // 3. Which scanners
-    const scannersRaw = (await rl.question("3. Enable scanners [static,container,dynamic,ai] (default: static,dynamic): ")).trim();
+    const scannersRaw = (
+      await rl.question(
+        "3. Enable scanners [static,container,dynamic,ai] (default: static,dynamic): "
+      )
+    ).trim();
     const scannerList = scannersRaw
-      ? scannersRaw.split(",").map(s => s.trim().toLowerCase())
+      ? scannersRaw.split(",").map((s) => s.trim().toLowerCase())
       : ["static", "dynamic"];
-    const enableStatic    = scannerList.includes("static");
+    const enableStatic = scannerList.includes("static");
     const enableContainer = scannerList.includes("container");
-    const enableDynamic   = scannerList.includes("dynamic");
-    const enableAi        = scannerList.includes("ai");
+    const enableDynamic = scannerList.includes("dynamic");
+    const enableAi = scannerList.includes("ai");
 
     // 4. CI provider
-    const ciProviderRaw = (await rl.question("4. CI provider [github/gitlab/azure/none] (default: none): ")).trim().toLowerCase();
-    const ciProvider = ["github", "gitlab", "azure"].includes(ciProviderRaw) ? ciProviderRaw as "github" | "gitlab" | "azure" : undefined;
+    const ciProviderRaw = (
+      await rl.question("4. CI provider [github/gitlab/azure/none] (default: none): ")
+    )
+      .trim()
+      .toLowerCase();
+    const ciProvider = ["github", "gitlab", "azure"].includes(ciProviderRaw)
+      ? (ciProviderRaw as "github" | "gitlab" | "azure")
+      : undefined;
 
     // 5. Fail threshold
-    const failOnRaw = (await rl.question("5. Fail build on severity [LOW/MEDIUM/HIGH/CRITICAL] (default: HIGH): ")).trim().toUpperCase();
+    const failOnRaw = (
+      await rl.question("5. Fail build on severity [LOW/MEDIUM/HIGH/CRITICAL] (default: HIGH): ")
+    )
+      .trim()
+      .toUpperCase();
     const failOn = ["LOW", "MEDIUM", "HIGH", "CRITICAL"].includes(failOnRaw) ? failOnRaw : "HIGH";
 
     rl.close();
 
     const authBlock = buildAuthBlock(authType);
-    const config = buildWizardConfig(targetUrl, authBlock, enableStatic, enableContainer, enableDynamic, enableAi, failOn);
+    const config = buildWizardConfig(
+      targetUrl,
+      authBlock,
+      enableStatic,
+      enableContainer,
+      enableDynamic,
+      enableAi,
+      failOn
+    );
 
     const outputPath = options.output || "security.config.yml";
     writeFile(outputPath, config, options.force === true);
@@ -132,7 +160,9 @@ function buildWizardConfig(
     `    enabled: ${enableDynamic}`,
     `  ai:`,
     `    enabled: ${enableAi}`,
-    ...(enableAi ? [`    provider: ollama`, `    model: llama3:8b`, `    baseUrl: http://localhost:11434`] : []),
+    ...(enableAi
+      ? [`    provider: ollama`, `    model: llama3:8b`, `    baseUrl: http://localhost:11434`]
+      : []),
     ``,
     `thresholds:`,
     `  failOn: ${failOn}`,
@@ -175,7 +205,11 @@ function writeCiTemplate(provider: string, force: boolean): string {
     case "gitlab":
       return copyTemplate("docs/ci/templates/gitlab-security.yml", ".gitlab-ci.yml", force);
     case "azure":
-      return copyTemplate("docs/ci/templates/azure-pipelines-security.yml", "azure-pipelines-security.yml", force);
+      return copyTemplate(
+        "docs/ci/templates/azure-pipelines-security.yml",
+        "azure-pipelines-security.yml",
+        force
+      );
     default:
       throw new Error(`Unsupported CI provider: ${provider}. Use github, gitlab, or azure.`);
   }
@@ -303,4 +337,3 @@ findings:
   #   reason: "Accepted temporarily while legacy endpoint is replaced."
   #   expires: "2026-12-31"
 `;
-

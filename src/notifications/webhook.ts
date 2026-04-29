@@ -46,6 +46,8 @@ export async function sendWebhookNotification(
 
   const response = await fetch(config.url, { method: "POST", headers, body });
   if (!response.ok) {
-    throw new Error(`Webhook POST to ${config.url} returned ${response.status}: ${await response.text()}`);
+    throw new Error(
+      `Webhook POST to ${config.url} returned ${response.status}: ${await response.text()}`
+    );
   }
 }

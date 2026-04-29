@@ -14,15 +14,13 @@ export function enforceTargetSafety(
   const hostname = target.hostname.toLowerCase();
 
   if (!isAllowedHost(hostname, safety?.allowedHosts)) {
-    throw new ConfigError(
-      `Target host ${hostname} is not in safety.allowedHosts`
-    );
+    throw new ConfigError(`Target host ${hostname} is not in safety.allowedHosts`);
   }
 
   if (ciMode && !safety?.allowProductionTargets && isProductionLikeHost(hostname)) {
     throw new ConfigError(
       `Refusing to scan production-looking host ${hostname} in CI. ` +
-      "Set safety.allowProductionTargets: true after confirming scope."
+        "Set safety.allowProductionTargets: true after confirming scope."
     );
   }
 }
@@ -57,11 +55,7 @@ export function isPathExcluded(path: string, safety?: SafetyConfig): boolean {
   return patterns.some((pattern) => pathMatchesPattern(path, pattern));
 }
 
-export function isUrlInScope(
-  url: URL,
-  targetUrl: string,
-  safety?: SafetyConfig
-): boolean {
+export function isUrlInScope(url: URL, targetUrl: string, safety?: SafetyConfig): boolean {
   const target = parseHttpUrl(targetUrl);
   const hostname = url.hostname.toLowerCase();
 
@@ -98,9 +92,7 @@ function hostMatches(hostname: string, pattern: string): boolean {
 }
 
 function isProductionLikeHost(hostname: string): boolean {
-  return hostname
-    .split(/[.\-_]/)
-    .some((part) => PRODUCTION_TOKENS.has(part));
+  return hostname.split(/[.\-_]/).some((part) => PRODUCTION_TOKENS.has(part));
 }
 
 function pathMatchesPattern(path: string, pattern: string): boolean {
@@ -113,10 +105,7 @@ function pathMatchesPattern(path: string, pattern: string): boolean {
   }
 
   if (pattern.includes("*")) {
-    const escaped = pattern
-      .split("*")
-      .map(escapeRegExp)
-      .join(".*");
+    const escaped = pattern.split("*").map(escapeRegExp).join(".*");
     return new RegExp(`^${escaped}$`).test(path);
   }
 

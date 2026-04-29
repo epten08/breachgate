@@ -5,11 +5,11 @@ import { Finding } from "../findings/finding.js";
 import { logger } from "../core/logger.js";
 
 interface SuppressionRule {
-  id?: string;          // exact finding ID
-  pattern?: string;     // substring match against title or category
-  endpoint?: string;    // substring match against endpoint
+  id?: string; // exact finding ID
+  pattern?: string; // substring match against title or category
+  endpoint?: string; // substring match against endpoint
   reason: string;
-  expires?: string;     // ISO date — rule ignored after this date
+  expires?: string; // ISO date — rule ignored after this date
 }
 
 interface SuppressionFile {
@@ -61,7 +61,7 @@ export function applySuppressions(
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const activeRules = rules.filter(r => !r.expires || r.expires >= today);
+  const activeRules = rules.filter((r) => !r.expires || r.expires >= today);
 
   if (activeRules.length < rules.length) {
     logger.debug(`${rules.length - activeRules.length} suppression rule(s) expired and ignored`);
@@ -71,7 +71,7 @@ export function applySuppressions(
   const suppressedFindings: Finding[] = [];
 
   for (const finding of findings) {
-    const suppressed = activeRules.some(rule => matchesRule(finding, rule));
+    const suppressed = activeRules.some((rule) => matchesRule(finding, rule));
     if (suppressed) {
       suppressedFindings.push(finding);
     } else {
@@ -91,10 +91,7 @@ function matchesRule(finding: Finding, rule: SuppressionRule): boolean {
 
   if (rule.pattern) {
     const pat = rule.pattern.toLowerCase();
-    if (
-      finding.title.toLowerCase().includes(pat) ||
-      finding.category.toLowerCase().includes(pat)
-    ) {
+    if (finding.title.toLowerCase().includes(pat) || finding.category.toLowerCase().includes(pat)) {
       // Further narrow by endpoint if specified
       if (rule.endpoint) {
         return !!finding.endpoint?.toLowerCase().includes(rule.endpoint.toLowerCase());

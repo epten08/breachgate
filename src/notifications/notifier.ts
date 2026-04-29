@@ -18,7 +18,7 @@ export async function sendNotifications(
 
   if (config.slack) {
     tasks.push(
-      sendSlackNotification(config.slack, verdict, findings, targetUrl).catch(err =>
+      sendSlackNotification(config.slack, verdict, findings, targetUrl).catch((err) =>
         logger.warn(`Slack notification failed: ${(err as Error).message}`)
       )
     );
@@ -26,7 +26,7 @@ export async function sendNotifications(
 
   if (config.github) {
     tasks.push(
-      sendGitHubNotification(config.github, verdict, findings, targetUrl).catch(err =>
+      sendGitHubNotification(config.github, verdict, findings, targetUrl).catch((err) =>
         logger.warn(`GitHub notification failed: ${(err as Error).message}`)
       )
     );
@@ -34,7 +34,7 @@ export async function sendNotifications(
 
   if (config.webhook) {
     tasks.push(
-      sendWebhookNotification(config.webhook, verdict, findings, targetUrl).catch(err =>
+      sendWebhookNotification(config.webhook, verdict, findings, targetUrl).catch((err) =>
         logger.warn(`Webhook notification failed: ${(err as Error).message}`)
       )
     );

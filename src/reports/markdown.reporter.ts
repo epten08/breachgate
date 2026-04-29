@@ -168,7 +168,10 @@ export class MarkdownReporter {
       lines.push("");
     }
 
-    if (verdict.confirmedExploits.length > 0 && (!verdict.breaches || verdict.breaches.length === 0)) {
+    if (
+      verdict.confirmedExploits.length > 0 &&
+      (!verdict.breaches || verdict.breaches.length === 0)
+    ) {
       lines.push("### ⚡ Confirmed Exploits");
       lines.push("");
       lines.push("These vulnerabilities were **actively exploited** during testing:");
@@ -191,11 +194,14 @@ export class MarkdownReporter {
 
     for (const corr of correlations.slice(0, 10)) {
       const riskPercent = Math.round(corr.combinedRisk * 100);
-      const riskEmoji = riskPercent >= 70 ? "🔴" : riskPercent >= 50 ? "🟠" : riskPercent >= 30 ? "🟡" : "🟢";
-      const vulnTypes = [...new Set(corr.findings.map(f => f.category))].slice(0, 2).join(", ");
+      const riskEmoji =
+        riskPercent >= 70 ? "🔴" : riskPercent >= 50 ? "🟠" : riskPercent >= 30 ? "🟡" : "🟢";
+      const vulnTypes = [...new Set(corr.findings.map((f) => f.category))].slice(0, 2).join(", ");
       const feasibility = riskPercent >= 70 ? "High" : riskPercent >= 50 ? "Medium" : "Low";
 
-      lines.push(`| \`${corr.endpoint}\` | ${riskEmoji} ${riskPercent}% | ${vulnTypes} | ${feasibility} |`);
+      lines.push(
+        `| \`${corr.endpoint}\` | ${riskEmoji} ${riskPercent}% | ${vulnTypes} | ${feasibility} |`
+      );
     }
 
     return lines.join("\n");
@@ -205,7 +211,7 @@ export class MarkdownReporter {
     const lines: string[] = [];
 
     // Deduplicate chains
-    const uniqueChains = new Map<string, typeof verdict.attackChains[0]>();
+    const uniqueChains = new Map<string, (typeof verdict.attackChains)[0]>();
     for (const chain of verdict.attackChains) {
       if (!uniqueChains.has(chain.name)) {
         uniqueChains.set(chain.name, chain);
@@ -213,7 +219,8 @@ export class MarkdownReporter {
     }
 
     for (const chain of uniqueChains.values()) {
-      const impactEmoji = chain.impact === "critical" ? "🔴" : chain.impact === "high" ? "🟠" : "🟡";
+      const impactEmoji =
+        chain.impact === "critical" ? "🔴" : chain.impact === "high" ? "🟠" : "🟡";
 
       lines.push(`### ${impactEmoji} ${chain.name}`);
       lines.push("");
@@ -241,9 +248,14 @@ export class MarkdownReporter {
     lines.push("");
 
     for (const rem of verdict.recommendations) {
-      const priorityEmoji = rem.priority === "immediate" ? "🚨" :
-                            rem.priority === "high" ? "⚠️" :
-                            rem.priority === "medium" ? "📋" : "📝";
+      const priorityEmoji =
+        rem.priority === "immediate"
+          ? "🚨"
+          : rem.priority === "high"
+            ? "⚠️"
+            : rem.priority === "medium"
+              ? "📋"
+              : "📝";
 
       lines.push(`### ${priorityEmoji} ${rem.finding.category}`);
       lines.push("");
@@ -281,19 +293,29 @@ export class MarkdownReporter {
     switch (verdict.verdict) {
       case "UNSAFE":
         if (verdict.breaches && verdict.breaches.length > 0) {
-          lines.push(`**No.** ${verdict.operationalConclusion}. This is a confirmed breach condition - an attacker can compromise the system.`);
+          lines.push(
+            `**No.** ${verdict.operationalConclusion}. This is a confirmed breach condition - an attacker can compromise the system.`
+          );
         } else {
-          lines.push("**No.** Active exploitation was successful during testing. This application has confirmed security vulnerabilities that can be exploited by attackers.");
+          lines.push(
+            "**No.** Active exploitation was successful during testing. This application has confirmed security vulnerabilities that can be exploited by attackers."
+          );
         }
         break;
       case "INCONCLUSIVE":
-        lines.push(`**Unknown.** ${verdict.reason} Security status cannot be determined - failing safely.`);
+        lines.push(
+          `**Unknown.** ${verdict.reason} Security status cannot be determined - failing safely.`
+        );
         break;
       case "REVIEW_REQUIRED":
-        lines.push("**Not yet.** Significant security findings require review before deployment. While no active exploitation was confirmed, the risk profile requires security team sign-off.");
+        lines.push(
+          "**Not yet.** Significant security findings require review before deployment. While no active exploitation was confirmed, the risk profile requires security team sign-off."
+        );
         break;
       case "SAFE":
-        lines.push("**Yes.** No significant security issues were detected. The application meets security standards for deployment.");
+        lines.push(
+          "**Yes.** No significant security issues were detected. The application meets security standards for deployment."
+        );
         break;
     }
 
@@ -308,7 +330,7 @@ export class MarkdownReporter {
     lines.push(`- **Attack Chains Identified:** ${verdict.attackChains.length}`);
 
     // AI findings highlight
-    const aiFindings = findings.filter(f => f.sources.includes("AI Security Tester"));
+    const aiFindings = findings.filter((f) => f.sources.includes("AI Security Tester"));
     if (aiFindings.length > 0) {
       lines.push(`- **AI-Confirmed Vulnerabilities:** ${aiFindings.length} (behavioral testing)`);
     }
@@ -371,7 +393,9 @@ export class MarkdownReporter {
       lines.push(`### ${this.getSeverityEmoji(finding.severity)} ${finding.title}`);
       lines.push("");
       lines.push(`**Category:** ${finding.category}`);
-      lines.push(`**Risk Score:** ${finding.riskScore.toFixed(2)} (Exploitability: ${finding.exploitability.toFixed(2)}, Confidence: ${finding.confidence.toFixed(2)})`);
+      lines.push(
+        `**Risk Score:** ${finding.riskScore.toFixed(2)} (Exploitability: ${finding.exploitability.toFixed(2)}, Confidence: ${finding.confidence.toFixed(2)})`
+      );
 
       if (finding.endpoint) {
         lines.push(`**Endpoint:** \`${finding.endpoint}\``);
@@ -412,7 +436,9 @@ export class MarkdownReporter {
       const isAIDetected = finding.sources.includes("AI Security Tester");
       if (isAIDetected) {
         lines.push(`**Sources:** ${finding.sources.join(", ")} 🤖`);
-        lines.push(`> *AI-detected: This vulnerability was identified through intelligent security testing that understands endpoint semantics and business logic.*`);
+        lines.push(
+          `> *AI-detected: This vulnerability was identified through intelligent security testing that understands endpoint semantics and business logic.*`
+        );
       } else {
         lines.push(`**Sources:** ${finding.sources.join(", ")}`);
       }
@@ -435,7 +461,9 @@ export class MarkdownReporter {
       // Add remediation guidance
       const remediation = this.riskEngine.getRemediation(finding);
       lines.push("");
-      lines.push(`**Remediation:** ${this.getPriorityEmoji(remediation.priority)} ${remediation.action}`);
+      lines.push(
+        `**Remediation:** ${this.getPriorityEmoji(remediation.priority)} ${remediation.action}`
+      );
       lines.push(`> ${remediation.details}`);
       lines.push(`> *Effort: ${remediation.effort}*`);
 
@@ -529,4 +557,3 @@ export class MarkdownReporter {
     }
   }
 }
-

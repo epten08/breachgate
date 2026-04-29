@@ -12,8 +12,17 @@ export async function sendSlackNotification(
     return;
   }
 
-  const emoji = { SAFE: ":white_check_mark:", UNSAFE: ":no_entry:", REVIEW_REQUIRED: ":warning:", INCONCLUSIVE: ":question:" }[verdict.verdict] ?? ":question:";
-  const color = { SAFE: "#16a34a", UNSAFE: "#dc2626", REVIEW_REQUIRED: "#d97706", INCONCLUSIVE: "#7c3aed" }[verdict.verdict] ?? "#64748b";
+  const emoji =
+    {
+      SAFE: ":white_check_mark:",
+      UNSAFE: ":no_entry:",
+      REVIEW_REQUIRED: ":warning:",
+      INCONCLUSIVE: ":question:",
+    }[verdict.verdict] ?? ":question:";
+  const color =
+    { SAFE: "#16a34a", UNSAFE: "#dc2626", REVIEW_REQUIRED: "#d97706", INCONCLUSIVE: "#7c3aed" }[
+      verdict.verdict
+    ] ?? "#64748b";
 
   const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
   for (const f of findings) {

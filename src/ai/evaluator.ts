@@ -130,7 +130,11 @@ export class TestEvaluator {
   private classifyVulnerability(
     testCase: SecurityTestCase,
     matchedCriteria: string[]
-  ): { type: string; severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"; recommendation: string } | null {
+  ): {
+    type: string;
+    severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    recommendation: string;
+  } | null {
     const category = testCase.category.toLowerCase();
     const criteriaStr = matchedCriteria.join(" ").toLowerCase();
 
@@ -139,7 +143,8 @@ export class TestEvaluator {
       return {
         type: "SQL Injection",
         severity: "CRITICAL",
-        recommendation: "Use parameterized queries or prepared statements. Never concatenate user input into SQL queries.",
+        recommendation:
+          "Use parameterized queries or prepared statements. Never concatenate user input into SQL queries.",
       };
     }
 
@@ -148,7 +153,8 @@ export class TestEvaluator {
       return {
         type: "Cross-Site Scripting (XSS)",
         severity: "HIGH",
-        recommendation: "Encode all user input before rendering. Use Content-Security-Policy headers.",
+        recommendation:
+          "Encode all user input before rendering. Use Content-Security-Policy headers.",
       };
     }
 
@@ -157,7 +163,8 @@ export class TestEvaluator {
       return {
         type: "Broken Access Control",
         severity: "HIGH",
-        recommendation: "Implement proper authentication and authorization checks. Use middleware to verify access.",
+        recommendation:
+          "Implement proper authentication and authorization checks. Use middleware to verify access.",
       };
     }
 
@@ -175,7 +182,8 @@ export class TestEvaluator {
       return {
         type: "Server-Side Request Forgery (SSRF)",
         severity: "HIGH",
-        recommendation: "Validate and allowlist URLs accepted by the server. Never fetch attacker-supplied URLs without strict validation.",
+        recommendation:
+          "Validate and allowlist URLs accepted by the server. Never fetch attacker-supplied URLs without strict validation.",
       };
     }
 
@@ -184,16 +192,22 @@ export class TestEvaluator {
       return {
         type: "Mass Assignment",
         severity: "HIGH",
-        recommendation: "Use explicit allowlists for accepted request fields. Never bind request bodies directly to model objects.",
+        recommendation:
+          "Use explicit allowlists for accepted request fields. Never bind request bodies directly to model objects.",
       };
     }
 
     // JWT attacks
-    if (category.includes("jwt") || criteriaStr.includes("jwt") || criteriaStr.includes("algorithm confusion")) {
+    if (
+      category.includes("jwt") ||
+      criteriaStr.includes("jwt") ||
+      criteriaStr.includes("algorithm confusion")
+    ) {
       return {
         type: "Broken Authentication (JWT)",
         severity: "CRITICAL",
-        recommendation: "Enforce algorithm allowlists server-side. Validate all JWT claims. Reject tokens with alg:none.",
+        recommendation:
+          "Enforce algorithm allowlists server-side. Validate all JWT claims. Reject tokens with alg:none.",
       };
     }
 
@@ -202,21 +216,21 @@ export class TestEvaluator {
       return {
         type: "Blind Injection (Time-based)",
         severity: "CRITICAL",
-        recommendation: "Use parameterized queries and avoid passing user input to system calls. Investigate time-delay payloads manually to confirm.",
+        recommendation:
+          "Use parameterized queries and avoid passing user input to system calls. Investigate time-delay payloads manually to confirm.",
       };
     }
 
     // Security headers — only report when there is no other substantive finding.
     // All criteria being header-miss only means no actual exploitation occurred.
     if (criteriaStr.includes("security header")) {
-      const substantive = matchedCriteria.filter(
-        (c) => !c.startsWith("Missing security header")
-      );
+      const substantive = matchedCriteria.filter((c) => !c.startsWith("Missing security header"));
       if (substantive.length === 0) {
         return {
           type: "Security Misconfiguration",
           severity: "MEDIUM",
-          recommendation: "Add security headers: X-Content-Type-Options, X-Frame-Options, Strict-Transport-Security.",
+          recommendation:
+            "Add security headers: X-Content-Type-Options, X-Frame-Options, Strict-Transport-Security.",
         };
       }
     }
@@ -226,7 +240,8 @@ export class TestEvaluator {
       return {
         type: "Information Disclosure",
         severity: "MEDIUM",
-        recommendation: "Disable detailed error messages in production. Log errors server-side only.",
+        recommendation:
+          "Disable detailed error messages in production. Log errors server-side only.",
       };
     }
 
@@ -235,16 +250,22 @@ export class TestEvaluator {
       return {
         type: "Command Injection",
         severity: "CRITICAL",
-        recommendation: "Never pass user input directly to shell commands. Use allowlists for permitted operations.",
+        recommendation:
+          "Never pass user input directly to shell commands. Use allowlists for permitted operations.",
       };
     }
 
     // Information Disclosure (debug endpoints, etc.)
-    if (category.includes("disclosure") || category.includes("debug") || category.includes("info")) {
+    if (
+      category.includes("disclosure") ||
+      category.includes("debug") ||
+      category.includes("info")
+    ) {
       return {
         type: "Information Disclosure",
         severity: "MEDIUM",
-        recommendation: "Remove or protect debug endpoints. Never expose system information in production.",
+        recommendation:
+          "Remove or protect debug endpoints. Never expose system information in production.",
       };
     }
 
@@ -253,7 +274,8 @@ export class TestEvaluator {
       return {
         type: "Path Traversal",
         severity: "HIGH",
-        recommendation: "Validate and sanitize file paths. Use allowlists for permitted directories.",
+        recommendation:
+          "Validate and sanitize file paths. Use allowlists for permitted directories.",
       };
     }
 

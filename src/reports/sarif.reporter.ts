@@ -139,7 +139,10 @@ export class SarifReporter {
   }
 
   private ruleId(category: string): string {
-    return `BREACH-GATE-${category.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+    return `BREACH-GATE-${category
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")}`;
   }
 
   private filterFindings(findings: Finding[], policyEvaluation?: PolicyEvaluation): Finding[] {
@@ -174,4 +177,3 @@ export class SarifReporter {
     }
   }
 }
-

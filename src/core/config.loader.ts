@@ -132,14 +132,14 @@ export interface SlackNotificationConfig {
 
 export interface GitHubNotificationConfig {
   token: string;
-  repo: string;             // "owner/repo"
+  repo: string; // "owner/repo"
   issueOnFailure?: boolean; // Open/update a GitHub issue on UNSAFE/INCONCLUSIVE
-  prComment?: boolean;      // Post a PR comment when GITHUB_PR_NUMBER env var is set
+  prComment?: boolean; // Post a PR comment when GITHUB_PR_NUMBER env var is set
 }
 
 export interface WebhookNotificationConfig {
   url: string;
-  secret?: string;          // If set, send X-Breach-Gate-Signature: sha256=<hmac>
+  secret?: string; // If set, send X-Breach-Gate-Signature: sha256=<hmac>
   onlyOnFailure?: boolean;
 }
 
@@ -259,14 +259,16 @@ function mergeConfig(
     },
     thresholds: { ...defaults.thresholds, ...overrides.thresholds },
     safety: { ...defaults.safety, ...overrides.safety },
-    policy: overrides.policy ? {
-      ...defaults.policy,
-      ...overrides.policy,
-      profiles: {
-        ...defaults.policy?.profiles,
-        ...overrides.policy.profiles,
-      },
-    } : defaults.policy,
+    policy: overrides.policy
+      ? {
+          ...defaults.policy,
+          ...overrides.policy,
+          profiles: {
+            ...defaults.policy?.profiles,
+            ...overrides.policy.profiles,
+          },
+        }
+      : defaults.policy,
     reporting: { ...defaults.reporting, ...overrides.reporting },
     notifications: overrides.notifications ?? defaults.notifications,
   };
@@ -291,11 +293,21 @@ export function validateConfig(config: SecurityBotConfig): void {
     errors.push("JWT token or pre-scan hook must be provided when auth type is jwt");
   }
 
-  if (config.auth?.type === "apikey" && !authHasRoles && !config.auth.apiKey && !config.auth.preScan) {
+  if (
+    config.auth?.type === "apikey" &&
+    !authHasRoles &&
+    !config.auth.apiKey &&
+    !config.auth.preScan
+  ) {
     errors.push("API key or pre-scan hook must be provided when auth type is apikey");
   }
 
-  if (config.auth?.type === "session" && !authHasRoles && !config.auth.cookieValue && !config.auth.preScan) {
+  if (
+    config.auth?.type === "session" &&
+    !authHasRoles &&
+    !config.auth.cookieValue &&
+    !config.auth.preScan
+  ) {
     errors.push("Cookie value or pre-scan hook must be provided when auth type is session");
   }
 
@@ -342,16 +354,19 @@ function interpolateEnvValues(value: unknown, path = "config"): unknown {
 }
 
 function interpolateEnvString(value: string, path: string): string {
-  return value.replace(/\$\{([A-Z0-9_]+)(?::-([^}]*))?\}/gi, (_match, name: string, fallback: string | undefined) => {
-    const envValue = process.env[name];
-    if (envValue !== undefined) {
-      return envValue;
-    }
+  return value.replace(
+    /\$\{([A-Z0-9_]+)(?::-([^}]*))?\}/gi,
+    (_match, name: string, fallback: string | undefined) => {
+      const envValue = process.env[name];
+      if (envValue !== undefined) {
+        return envValue;
+      }
 
-    if (fallback !== undefined) {
-      return fallback;
-    }
+      if (fallback !== undefined) {
+        return fallback;
+      }
 
-    throw new ConfigError(`Missing environment variable ${name} referenced by ${path}`);
-  });
+      throw new ConfigError(`Missing environment variable ${name} referenced by ${path}`);
+    }
+  );
 }

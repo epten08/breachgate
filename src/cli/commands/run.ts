@@ -28,18 +28,23 @@ import {
 } from "../../policy/policy.js";
 import { loadSuppressionRules, applySuppressions } from "../../policy/suppression.js";
 import { resolveAuthContexts } from "../../auth/auth.js";
-import {
-  enforceTargetSafety,
-  shouldRunAiActiveTests,
-} from "../../safety/safety.js";
+import { enforceTargetSafety, shouldRunAiActiveTests } from "../../safety/safety.js";
 import { sendNotifications } from "../../notifications/notifier.js";
 
 export function createRunCommand(): Command {
   const cmd = new Command("scan")
     .description("Run security scans against the target")
     .option("-c, --config <path>", "Path to config file")
-    .option("--configs <paths>", "Comma-separated config files for monorepo/multi-service scans", parseConfigPaths, [])
-    .option("--workdir <path>", "Working directory for resolving config, compose, reports, and scanner paths")
+    .option(
+      "--configs <paths>",
+      "Comma-separated config files for monorepo/multi-service scans",
+      parseConfigPaths,
+      []
+    )
+    .option(
+      "--workdir <path>",
+      "Working directory for resolving config, compose, reports, and scanner paths"
+    )
     .option("-t, --target <url>", "Target URL (overrides config)")
     .option("-o, --output <dir>", "Output directory for reports")
     .option(
@@ -94,7 +99,7 @@ function outputCiResult(verdict: SecurityVerdict, policyEvaluation?: PolicyEvalu
         status = "FAILED";
         break;
       case "REVIEW_REQUIRED":
-        status = "PASSED";  // Don't fail CI, but note in reason
+        status = "PASSED"; // Don't fail CI, but note in reason
         break;
       case "INCONCLUSIVE":
         status = "INCONCLUSIVE";
@@ -127,13 +132,13 @@ function printVerdictExplanation(analyzer: AttackAnalyzer, findings: Finding[]):
   console.log("A score ≥ 0.6 = high risk  |  ≥ 0.3 = review required  |  < 0.3 = low risk");
   console.log("");
 
-  const rows = findings.slice(0, 20).map(f => {
+  const rows = findings.slice(0, 20).map((f) => {
     const v = analyzer.analyzeAttackVector(f);
     const score = (v.feasibilityScore * 100).toFixed(0).padStart(3);
-    const reach  = (v.reachability    * 100).toFixed(0).padStart(3);
+    const reach = (v.reachability * 100).toFixed(0).padStart(3);
     const exploit = (v.exploitability * 100).toFixed(0).padStart(3);
-    const impact  = (v.impact         * 100).toFixed(0).padStart(3);
-    const conf    = (v.confidence     * 100).toFixed(0).padStart(3);
+    const impact = (v.impact * 100).toFixed(0).padStart(3);
+    const conf = (v.confidence * 100).toFixed(0).padStart(3);
     const confirmed = v.isConfirmed ? " [CONFIRMED]" : "";
     const title = f.title.length > 40 ? f.title.slice(0, 37) + "..." : f.title.padEnd(40);
     return `  ${score}%  ${title}  reach=${reach}% exploit=${exploit}% impact=${impact}% conf=${conf}%${confirmed}`;
@@ -243,7 +248,11 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
 
     const policyRequested = isCiMode || !!config.policy;
     policy = policyRequested
-      ? resolvePolicyRules(config.policy, options.profile || (isCiMode ? "main" : undefined), options.differential)
+      ? resolvePolicyRules(
+          config.policy,
+          options.profile || (isCiMode ? "main" : undefined),
+          options.differential
+        )
       : undefined;
     baselineInfo = policyRequested
       ? loadBaseline(config.policy?.baselinePath, config.configFilePath)
@@ -330,7 +339,6 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
         showEvidence: config.reporting.includeEvidence,
       });
     }
-
   } catch (err) {
     if (isCiMode) {
       console.log("SECURITY STATUS: INCONCLUSIVE");
@@ -365,9 +373,7 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
   }
 
   const baselineApplied = applyBaseline(findingsAfterSuppression, baselineInfo.baseline);
-  const findingsForVerdict = policy
-    ? baselineApplied.effectiveFindings
-    : findingsAfterSuppression;
+  const findingsForVerdict = policy ? baselineApplied.effectiveFindings : findingsAfterSuppression;
 
   // Use generateVerdictWithStatus to properly handle scanner failures
   const verdict = attackAnalyzer.generateVerdictWithStatus(findingsForVerdict, {
@@ -377,16 +383,16 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
   });
   const policyEvaluation: PolicyEvaluation | undefined = policy
     ? evaluatePolicy({
-      allFindings: scanResult.findings,
-      effectiveFindings: baselineApplied.effectiveFindings,
-      suppressed: baselineApplied.suppressed,
-      expired: baselineApplied.expired,
-      verdict,
-      scanResult,
-      profile: policy.profile,
-      rules: policy.rules,
-      baselinePath: baselineInfo.path,
-    })
+        allFindings: scanResult.findings,
+        effectiveFindings: baselineApplied.effectiveFindings,
+        suppressed: baselineApplied.suppressed,
+        expired: baselineApplied.expired,
+        verdict,
+        scanResult,
+        profile: policy.profile,
+        rules: policy.rules,
+        baselinePath: baselineInfo.path,
+      })
     : undefined;
 
   // Determine exit code
@@ -396,7 +402,9 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
     exitCode = policyEvaluation.status === "failed" ? 1 : 0;
     if (!isCiMode) {
       if (policyEvaluation.status === "failed") {
-        logger.error(`Policy failed (${policyEvaluation.profile}): ${policyEvaluation.reasons.join("; ")}`);
+        logger.error(
+          `Policy failed (${policyEvaluation.profile}): ${policyEvaluation.reasons.join("; ")}`
+        );
       } else {
         logger.info(`Policy passed (${policyEvaluation.profile})`);
       }
@@ -466,14 +474,13 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
 
 function expandScanRuns(options: ScanOptions): PreparedScanRun[] {
   const originalCwd = process.cwd();
-  const explicitWorkdir = options.workdir
-    ? resolve(originalCwd, options.workdir)
-    : undefined;
-  const configPaths = options.configs && options.configs.length > 0
-    ? options.configs
-    : options.config
-      ? [options.config]
-      : [undefined];
+  const explicitWorkdir = options.workdir ? resolve(originalCwd, options.workdir) : undefined;
+  const configPaths =
+    options.configs && options.configs.length > 0
+      ? options.configs
+      : options.config
+        ? [options.config]
+        : [undefined];
   const isMultiConfig = configPaths.length > 1;
 
   return configPaths.map((configPath, index) => {
@@ -511,20 +518,22 @@ function scopeOutputDir(
     return resolvedOutput;
   }
 
-  return join(resolvedOutput, configPath ? slugForPath(configPath, originalCwd) : `config-${index + 1}`);
+  return join(
+    resolvedOutput,
+    configPath ? slugForPath(configPath, originalCwd) : `config-${index + 1}`
+  );
 }
 
 function slugForPath(path: string, baseDir: string): string {
-  const relative = path.startsWith(baseDir)
-    ? path.slice(baseDir.length)
-    : path;
-  return relative
-    .replace(/^[\\/]+/, "")
-    .replace(/\.[^.\\/]+$/, "")
-    .replace(/[\\/]+/g, "-")
-    .replace(/[^a-zA-Z0-9_-]+/g, "-")
-    .replace(/^-|-$/g, "")
-    || "config";
+  const relative = path.startsWith(baseDir) ? path.slice(baseDir.length) : path;
+  return (
+    relative
+      .replace(/^[\\/]+/, "")
+      .replace(/\.[^.\\/]+$/, "")
+      .replace(/[\\/]+/g, "-")
+      .replace(/[^a-zA-Z0-9_-]+/g, "-")
+      .replace(/^-|-$/g, "") || "config"
+  );
 }
 
 async function withWorkingDirectory<T>(workdir: string, fn: () => Promise<T>): Promise<T> {
@@ -580,10 +589,15 @@ async function createScanners(config: SecurityBotConfig): Promise<Scanner[]> {
   for (const pluginPath of config.scanners.plugins ?? []) {
     const resolvedPath = resolve(pluginPath);
     const { pathToFileURL } = await import("url");
-    const mod = await import(pathToFileURL(resolvedPath).href) as { default?: Scanner; scanner?: Scanner };
+    const mod = (await import(pathToFileURL(resolvedPath).href)) as {
+      default?: Scanner;
+      scanner?: Scanner;
+    };
     const plugin = mod.default ?? mod.scanner;
     if (!plugin || typeof plugin.run !== "function") {
-      throw new ConfigError(`Plugin at ${pluginPath} must export a default Scanner or a 'scanner' named export`);
+      throw new ConfigError(
+        `Plugin at ${pluginPath} must export a default Scanner or a 'scanner' named export`
+      );
     }
     scanners.push(plugin);
   }
@@ -615,13 +629,16 @@ function configureAiReplayArtifacts(
   isCiMode: boolean,
   authContextCount: number
 ): void {
-  if (!isCiMode || !config.scanners.ai.enabled || config.scanners.ai.replayTests || config.scanners.ai.saveTests) {
+  if (
+    !isCiMode ||
+    !config.scanners.ai.enabled ||
+    config.scanners.ai.replayTests ||
+    config.scanners.ai.saveTests
+  ) {
     return;
   }
 
-  const filename = authContextCount > 1
-    ? "ai-tests-{role}.json"
-    : "ai-tests.json";
+  const filename = authContextCount > 1 ? "ai-tests-{role}.json" : "ai-tests.json";
   config.scanners.ai.saveTests = join(config.reporting.outputDir, filename);
 }
 
@@ -636,9 +653,10 @@ interface RunConfiguredScansOptions {
 }
 
 async function runConfiguredScans(options: RunConfiguredScansOptions): Promise<ScanResult> {
-  const authContexts = options.authContexts.length > 0
-    ? options.authContexts
-    : [{ type: "none", role: "anonymous" } satisfies AuthContext];
+  const authContexts =
+    options.authContexts.length > 0
+      ? options.authContexts
+      : [{ type: "none", role: "anonymous" } satisfies AuthContext];
 
   if (authContexts.length === 1) {
     return runScannerSet({
@@ -648,20 +666,22 @@ async function runConfiguredScans(options: RunConfiguredScansOptions): Promise<S
     });
   }
 
-  const sharedCategories = options.enabledCategories.filter((category) =>
-    category === "static" || category === "container"
+  const sharedCategories = options.enabledCategories.filter(
+    (category) => category === "static" || category === "container"
   );
-  const roleCategories = options.enabledCategories.filter((category) =>
-    category === "dynamic" || category === "ai"
+  const roleCategories = options.enabledCategories.filter(
+    (category) => category === "dynamic" || category === "ai"
   );
   const results: ScanResult[] = [];
 
   if (sharedCategories.length > 0) {
-    results.push(await runScannerSet({
-      ...options,
-      enabledCategories: sharedCategories,
-      auth: authContexts[0],
-    }));
+    results.push(
+      await runScannerSet({
+        ...options,
+        enabledCategories: sharedCategories,
+        auth: authContexts[0],
+      })
+    );
   }
 
   for (const auth of authContexts) {
@@ -680,9 +700,11 @@ async function runConfiguredScans(options: RunConfiguredScansOptions): Promise<S
   return mergeScanResults(results);
 }
 
-async function runScannerSet(options: RunConfiguredScansOptions & {
-  auth: AuthContext;
-}): Promise<ScanResult> {
+async function runScannerSet(
+  options: RunConfiguredScansOptions & {
+    auth: AuthContext;
+  }
+): Promise<ScanResult> {
   const ctx = buildExecutionContext(
     options.config,
     options.envInfo,
@@ -749,7 +771,9 @@ function summarizeScanResult(
     .filter((status) => status.status === "unavailable")
     .map((status) => status.name);
   const failedScanners = scannerStatuses
-    .filter((status) => status.status === "failed" || (status.status === "unavailable" && status.required))
+    .filter(
+      (status) => status.status === "failed" || (status.status === "unavailable" && status.required)
+    )
     .map((status) => status.name);
 
   const allScannersFailed =
@@ -829,9 +853,7 @@ function loadOpenApiSpec(config: SecurityBotConfig): OpenAPIObject | undefined {
 
   try {
     const content = readFileSync(resolvedPath, "utf-8");
-    const parsed = resolvedPath.endsWith(".json")
-      ? JSON.parse(content)
-      : parseYaml(content);
+    const parsed = resolvedPath.endsWith(".json") ? JSON.parse(content) : parseYaml(content);
 
     if (!parsed || typeof parsed !== "object" || (!parsed.openapi && !parsed.swagger)) {
       throw new Error("missing openapi or swagger version field");
@@ -845,4 +867,3 @@ function loadOpenApiSpec(config: SecurityBotConfig): OpenAPIObject | undefined {
     throw new ConfigError(`Failed to load OpenAPI spec ${resolvedPath}: ${(err as Error).message}`);
   }
 }
-

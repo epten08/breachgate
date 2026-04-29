@@ -17,7 +17,10 @@ export async function sendGitHubNotification(
     await postPrComment(config, verdict, findings, targetUrl, prNumber);
   }
 
-  if (config.issueOnFailure && (verdict.verdict === "UNSAFE" || verdict.verdict === "INCONCLUSIVE")) {
+  if (
+    config.issueOnFailure &&
+    (verdict.verdict === "UNSAFE" || verdict.verdict === "INCONCLUSIVE")
+  ) {
     await upsertIssue(config, verdict, findings, targetUrl);
   }
 }
@@ -54,8 +57,8 @@ async function upsertIssue(
     throw new Error(`GitHub issue search failed (${searchResponse.status})`);
   }
 
-  const issues = await searchResponse.json() as Array<{ number: number; title: string }>;
-  const existing = issues.find(i => i.title.startsWith(ISSUE_TITLE_PREFIX));
+  const issues = (await searchResponse.json()) as Array<{ number: number; title: string }>;
+  const existing = issues.find((i) => i.title.startsWith(ISSUE_TITLE_PREFIX));
 
   if (existing) {
     const updateUrl = `https://api.github.com/repos/${config.repo}/issues/${existing.number}`;
@@ -82,7 +85,9 @@ function buildReportBody(verdict: SecurityVerdict, findings: Finding[], targetUr
     counts[f.severity] = (counts[f.severity] ?? 0) + 1;
   }
 
-  const icon = { SAFE: "✅", UNSAFE: "⛔", REVIEW_REQUIRED: "⚠️", INCONCLUSIVE: "❓" }[verdict.verdict] ?? "❓";
+  const icon =
+    { SAFE: "✅", UNSAFE: "⛔", REVIEW_REQUIRED: "⚠️", INCONCLUSIVE: "❓" }[verdict.verdict] ??
+    "❓";
 
   const lines = [
     `## ${icon} Breach Gate Security Report — ${verdict.verdict}`,

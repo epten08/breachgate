@@ -4,7 +4,15 @@
  * multi-config support, and report schema stability.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, Dirent } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+  Dirent,
+} from "fs";
 import { dirname, join, resolve } from "path";
 import { runProcess } from "../src/core/process.runner.js";
 
@@ -25,7 +33,10 @@ afterAll(() => {
 
 async function runCli(args: string[], env?: Record<string, string>) {
   const tsxBin = resolve("node_modules/tsx/dist/cli.mjs");
-  return runProcess(process.execPath, [tsxBin, "src/cli/index.ts", ...args], { env, timeout: 120000 });
+  return runProcess(process.execPath, [tsxBin, "src/cli/index.ts", ...args], {
+    env,
+    timeout: 120000,
+  });
 }
 
 function writeConfig(path: string, body: string): void {
@@ -150,10 +161,14 @@ describe("Monorepo and Multi-Config", () => {
     writeConfig(join(serviceDir, "security.config.yml"), disabledScannerConfig("./reports"));
 
     const result = await runCli([
-      "scan", "--ci",
-      "--workdir", serviceDir,
-      "--config", "security.config.yml",
-      "--format", "json",
+      "scan",
+      "--ci",
+      "--workdir",
+      serviceDir,
+      "--config",
+      "security.config.yml",
+      "--format",
+      "json",
     ]);
 
     expect(result.exitCode).toBe(0);
@@ -168,10 +183,14 @@ describe("Monorepo and Multi-Config", () => {
     writeConfig(svcB, disabledScannerConfig("./reports"));
 
     const result = await runCli([
-      "scan", "--ci",
-      "--configs", `${svcA},${svcB}`,
-      "--output", outputDir,
-      "--format", "json",
+      "scan",
+      "--ci",
+      "--configs",
+      `${svcA},${svcB}`,
+      "--output",
+      outputDir,
+      "--format",
+      "json",
     ]);
 
     expect(result.exitCode).toBe(0);

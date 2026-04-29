@@ -49,7 +49,8 @@ beforeAll(() => {
 function createMockRawFindings(): RawFinding[] {
   return [
     {
-      description: "SQL Injection in login endpoint - The login endpoint is vulnerable to SQL injection",
+      description:
+        "SQL Injection in login endpoint - The login endpoint is vulnerable to SQL injection",
       severityHint: "CRITICAL",
       category: "Injection",
       source: "zap",
@@ -190,7 +191,9 @@ describe("Config Loader", () => {
     mkdirSync(testDir, { recursive: true });
     process.env.SEC_BOT_TEST_JWT = "test-token";
 
-    writeFileSync(configPath, `
+    writeFileSync(
+      configPath,
+      `
 version: "1.0"
 target:
   baseUrl: http://localhost:3000
@@ -214,7 +217,9 @@ reporting:
   formats:
     - json
   includeEvidence: true
-`.trimStart(), "utf-8");
+`.trimStart(),
+      "utf-8"
+    );
 
     const config = loadConfig(configPath);
     expect(config.auth?.token).toBe("test-token");
@@ -228,14 +233,18 @@ reporting:
     const configPath = join(testDir, "missing-env.config.yml");
     mkdirSync(testDir, { recursive: true });
 
-    writeFileSync(configPath, `
+    writeFileSync(
+      configPath,
+      `
 version: "1.0"
 target:
   baseUrl: http://localhost:3000
 auth:
   type: jwt
   token: \${SEC_BOT_MISSING_JWT}
-`.trimStart(), "utf-8");
+`.trimStart(),
+      "utf-8"
+    );
 
     expect(() => loadConfig(configPath)).toThrow("SEC_BOT_MISSING_JWT");
 
@@ -314,8 +323,21 @@ describe("Reporting", () => {
       skippedScanners: [],
       unavailableScanners: ["Trivy Static"],
       scannerStatuses: [
-        { name: "Trivy Static", category: "static", status: "unavailable", required: true, durationMs: 10, message: "Trivy unavailable" },
-        { name: "OWASP ZAP API", category: "dynamic", status: "completed", required: true, durationMs: 20 },
+        {
+          name: "Trivy Static",
+          category: "static",
+          status: "unavailable",
+          required: true,
+          durationMs: 10,
+          message: "Trivy unavailable",
+        },
+        {
+          name: "OWASP ZAP API",
+          category: "dynamic",
+          status: "completed",
+          required: true,
+          durationMs: 20,
+        },
       ],
       isComplete: false,
       allScannersFailed: false,
@@ -356,8 +378,8 @@ describe("Reporting", () => {
     const html = reporter.generate(findings, { targetUrl: "http://localhost:3000" });
     expect(html).toContain("<!DOCTYPE html>");
     expect(html).toContain("Breach Gate Security Report");
-    expect(html).toContain("class=\"logo\"");
-    expect(html.includes("<script src") || html.includes("<link rel=\"stylesheet\"")).toBe(false);
+    expect(html).toContain('class="logo"');
+    expect(html.includes("<script src") || html.includes('<link rel="stylesheet"')).toBe(false);
   });
 
   it("CLI summary renders without error", () => {
@@ -400,7 +422,9 @@ describe("Policy", () => {
     const fingerprint = fingerprintFinding(findings[0]);
     const result = applyBaseline(findings, {
       version: "1.0",
-      findings: [{ fingerprint, owner: "security", reason: "Accepted test finding", expires: "2999-12-31" }],
+      findings: [
+        { fingerprint, owner: "security", reason: "Accepted test finding", expires: "2999-12-31" },
+      ],
     });
     expect(result.suppressed.length).toBe(1);
     expect(result.effectiveFindings.length).toBe(findings.length - 1);
@@ -409,7 +433,10 @@ describe("Policy", () => {
   it("evaluates pull-request policy — fails on high/critical findings", () => {
     const { profile, rules } = resolvePolicyRules(undefined, "pull-request");
     const analyzer = new AttackAnalyzer();
-    const verdict = analyzer.generateVerdictWithStatus(findings, { isComplete: true, failedScanners: [] });
+    const verdict = analyzer.generateVerdictWithStatus(findings, {
+      isComplete: true,
+      failedScanners: [],
+    });
     const evaluation = evaluatePolicy({
       allFindings: findings,
       effectiveFindings: findings,
@@ -443,7 +470,13 @@ describe("Auth, Replay, and Safety", () => {
       type: "none",
       roles: [
         { name: "anonymous", type: "none" },
-        { name: "admin", type: "session", cookieName: "sid", cookieValue: "abc123", headers: { "X-Role": "admin" } },
+        {
+          name: "admin",
+          type: "session",
+          cookieName: "sid",
+          cookieValue: "abc123",
+          headers: { "X-Role": "admin" },
+        },
       ],
     });
     expect(contexts.length).toBe(2);
@@ -457,7 +490,10 @@ describe("Auth, Replay, and Safety", () => {
       type: "jwt",
       preScan: {
         command: process.execPath,
-        args: ["-e", "console.log(JSON.stringify({ token: 'hook-token', headers: { 'X-Trace': 'ci' } }))"],
+        args: [
+          "-e",
+          "console.log(JSON.stringify({ token: 'hook-token', headers: { 'X-Trace': 'ci' } }))",
+        ],
         output: "json",
       },
     });
@@ -467,11 +503,19 @@ describe("Auth, Replay, and Safety", () => {
 
   it("enforces host allowlists and rejects out-of-allowlist hosts", () => {
     expect(() =>
-      enforceTargetSafety({ profile: "safe-active", allowedHosts: ["*.example.com"] }, "https://api.example.com", true)
+      enforceTargetSafety(
+        { profile: "safe-active", allowedHosts: ["*.example.com"] },
+        "https://api.example.com",
+        true
+      )
     ).not.toThrow();
 
     expect(() =>
-      enforceTargetSafety({ profile: "safe-active", allowedHosts: ["api.example.com"] }, "https://evil.example.com", true)
+      enforceTargetSafety(
+        { profile: "safe-active", allowedHosts: ["api.example.com"] },
+        "https://evil.example.com",
+        true
+      )
     ).toThrow();
 
     expect(allowsDestructiveMethod("DELETE", { profile: "safe-active" })).toBe(false);
@@ -491,7 +535,13 @@ describe("Auth, Replay, and Safety", () => {
 
     try {
       const executor = new TestExecutor(
-        createTestExecutionContext({ type: "session", role: "admin", cookieName: "sid", cookieValue: "cookie-value", headers: { "X-Test-Role": "admin" } })
+        createTestExecutionContext({
+          type: "session",
+          role: "admin",
+          cookieName: "sid",
+          cookieValue: "cookie-value",
+          headers: { "X-Test-Role": "admin" },
+        })
       );
       const results = await executor.execute([createHeaderTestCase()]);
       expect(results.length).toBe(1);
@@ -512,7 +562,11 @@ describe("Auth, Replay, and Safety", () => {
     globalThis.fetch = (async () => new Response("ok", { status: 200 })) as typeof fetch;
 
     try {
-      const scanner = new AIScanner({ provider: "ollama", model: "missing-model", replayTests: replayPath });
+      const scanner = new AIScanner({
+        provider: "ollama",
+        model: "missing-model",
+        replayTests: replayPath,
+      });
       const findings = await scanner.run(createTestExecutionContext());
       expect(findings.length).toBeGreaterThan(0);
       expect(findings[0].role).toBe("anonymous");
@@ -530,7 +584,11 @@ describe("Auth, Replay, and Safety", () => {
 describe("Scanner Failure Handling", () => {
   it("marks required unavailable scanners as incomplete", async () => {
     const orchestrator = new Orchestrator(
-      [createMockScanner("Missing Tool", "static", () => { throw new ScannerUnavailableError("tool missing", "Missing Tool"); })],
+      [
+        createMockScanner("Missing Tool", "static", () => {
+          throw new ScannerUnavailableError("tool missing", "Missing Tool");
+        }),
+      ],
       { enabledCategories: ["static"], requiredCategories: ["static"], continueOnError: true }
     );
     const result = await orchestrator.runWithStatus(createTestExecutionContext());
@@ -541,7 +599,11 @@ describe("Scanner Failure Handling", () => {
 
   it("marks optional unavailable scanners as skipped (scan still complete)", async () => {
     const orchestrator = new Orchestrator(
-      [createMockScanner("Optional Tool", "static", () => { throw new ScannerUnavailableError("tool missing", "Optional Tool"); })],
+      [
+        createMockScanner("Optional Tool", "static", () => {
+          throw new ScannerUnavailableError("tool missing", "Optional Tool");
+        }),
+      ],
       { enabledCategories: ["static"], requiredCategories: [], continueOnError: true }
     );
     const result = await orchestrator.runWithStatus(createTestExecutionContext());
@@ -552,7 +614,11 @@ describe("Scanner Failure Handling", () => {
 
   it("marks scanner runtime errors as failed", async () => {
     const orchestrator = new Orchestrator(
-      [createMockScanner("Broken Scanner", "dynamic", () => { throw new ScannerError("boom", "Broken Scanner"); })],
+      [
+        createMockScanner("Broken Scanner", "dynamic", () => {
+          throw new ScannerError("boom", "Broken Scanner");
+        }),
+      ],
       { enabledCategories: ["dynamic"], requiredCategories: ["dynamic"], continueOnError: true }
     );
     const result = await orchestrator.runWithStatus(createTestExecutionContext());
@@ -564,8 +630,12 @@ describe("Scanner Failure Handling", () => {
   it("returns INCONCLUSIVE when all optional scanners are unavailable", async () => {
     const orchestrator = new Orchestrator(
       [
-        createMockScanner("Tool A", "static", () => { throw new ScannerUnavailableError("not found", "Tool A"); }),
-        createMockScanner("Tool B", "dynamic", () => { throw new ScannerUnavailableError("not found", "Tool B"); }),
+        createMockScanner("Tool A", "static", () => {
+          throw new ScannerUnavailableError("not found", "Tool A");
+        }),
+        createMockScanner("Tool B", "dynamic", () => {
+          throw new ScannerUnavailableError("not found", "Tool B");
+        }),
       ],
       { enabledCategories: ["static", "dynamic"], requiredCategories: [], continueOnError: true }
     );

@@ -72,11 +72,7 @@ export class ReportGenerator {
     return reports;
   }
 
-  generateReport(
-    findings: Finding[],
-    format: ReportFormat,
-    options: ReportOptions
-  ): string {
+  generateReport(findings: Finding[], format: ReportFormat, options: ReportOptions): string {
     switch (format) {
       case "json":
         return this.jsonReporter.generate(findings, {
@@ -128,7 +124,12 @@ export class ReportGenerator {
   }
 
   private getFilename(format: ReportFormat, dateStr: string, stable = false): string {
-    const ext: Record<ReportFormat, string> = { markdown: "md", json: "json", sarif: "sarif", html: "html" };
+    const ext: Record<ReportFormat, string> = {
+      markdown: "md",
+      json: "json",
+      sarif: "sarif",
+      html: "html",
+    };
     const extension = ext[format] ?? format;
     if (stable) {
       return `security-report.${extension}`;

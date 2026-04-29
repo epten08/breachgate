@@ -182,7 +182,8 @@ export class Deduplicator {
     const cve = primary.cve || duplicates.find((d) => d.cve)?.cve;
     const cwe = primary.cwe || duplicates.find((d) => d.cwe)?.cwe;
     const reference = primary.reference || duplicates.find((d) => d.reference)?.reference;
-    const fixedVersion = primary.fixedVersion || duplicates.find((d) => d.fixedVersion)?.fixedVersion;
+    const fixedVersion =
+      primary.fixedVersion || duplicates.find((d) => d.fixedVersion)?.fixedVersion;
 
     return {
       ...primary,

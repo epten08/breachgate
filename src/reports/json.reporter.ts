@@ -106,22 +106,26 @@ export class JsonReporter {
         targetUrl: options.targetUrl,
         scanDuration: options.scanDuration,
       },
-      verdict: options.verdict ? {
-        status: options.verdict.verdict,
-        reason: options.verdict.reason,
-        operationalConclusion: options.verdict.operationalConclusion,
-        scanIncomplete: options.verdict.scanIncomplete ?? false,
-        failedScanners: options.verdict.failedScanners ?? [],
-        confirmedExploits: options.verdict.confirmedExploits.length,
-        criticalFindings: options.verdict.criticalFindings.length,
-      } : undefined,
-      scannerStatus: options.scanResult ? {
-        completed: options.scanResult.completedScanners,
-        failed: options.scanResult.failedScanners,
-        skipped: options.scanResult.skippedScanners,
-        unavailable: options.scanResult.unavailableScanners,
-        details: options.scanResult.scannerStatuses,
-      } : undefined,
+      verdict: options.verdict
+        ? {
+            status: options.verdict.verdict,
+            reason: options.verdict.reason,
+            operationalConclusion: options.verdict.operationalConclusion,
+            scanIncomplete: options.verdict.scanIncomplete ?? false,
+            failedScanners: options.verdict.failedScanners ?? [],
+            confirmedExploits: options.verdict.confirmedExploits.length,
+            criticalFindings: options.verdict.criticalFindings.length,
+          }
+        : undefined,
+      scannerStatus: options.scanResult
+        ? {
+            completed: options.scanResult.completedScanners,
+            failed: options.scanResult.failedScanners,
+            skipped: options.scanResult.skippedScanners,
+            unavailable: options.scanResult.unavailableScanners,
+            details: options.scanResult.scannerStatuses,
+          }
+        : undefined,
       policy: options.policy,
       policyEvaluation: options.policyEvaluation,
       summary: {

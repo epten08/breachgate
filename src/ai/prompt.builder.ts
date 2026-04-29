@@ -79,9 +79,10 @@ Respond with a JSON array of test cases in this format:
     const body = endpoint.requestBody ? `Request body: ${endpoint.requestBody}` : "";
 
     // Task 4: include JWT-specific attack guidance when JWT auth is configured.
-    const jwtGuidance = this.ctx.auth?.type === "jwt"
-      ? `\nJWT Auth detected — also consider: algorithm confusion (alg:none), claim tampering (role, is_admin, sub), expired token acceptance.`
-      : "";
+    const jwtGuidance =
+      this.ctx.auth?.type === "jwt"
+        ? `\nJWT Auth detected — also consider: algorithm confusion (alg:none), claim tampering (role, is_admin, sub), expired token acceptance.`
+        : "";
 
     return `You are conducting an authorized security assessment. Generate exactly ${count} OWASP-based test cases for this endpoint:
 

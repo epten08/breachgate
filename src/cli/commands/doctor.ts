@@ -51,7 +51,7 @@ async function runDoctor(options: DoctorOptions): Promise<void> {
     process.exit(2);
   }
 
-  results.push(...await checkScannerPrerequisites(config, options.ci === true));
+  results.push(...(await checkScannerPrerequisites(config, options.ci === true)));
   results.push(await checkTarget(config));
 
   renderResults(results);
@@ -68,29 +68,59 @@ function checkNodeVersion(): CheckResult {
   return { name: "node", status: "fail", message: `Node.js ${process.version}; expected >=18` };
 }
 
-async function checkScannerPrerequisites(config: SecurityBotConfig, ciMode: boolean): Promise<CheckResult[]> {
+async function checkScannerPrerequisites(
+  config: SecurityBotConfig,
+  ciMode: boolean
+): Promise<CheckResult[]> {
   const results: CheckResult[] = [];
   const hasDocker = await checkCommand("docker");
   const hasTrivy = await checkCommand("trivy");
-  const hasZap = await checkCommand("zap.sh") || await checkCommand("zap.bat") || await checkCommand("zap-cli");
+  const hasZap =
+    (await checkCommand("zap.sh")) ||
+    (await checkCommand("zap.bat")) ||
+    (await checkCommand("zap-cli"));
 
   if (config.scanners.static.enabled || config.scanners.container.enabled) {
-    results.push(toolResult("trivy", hasTrivy || hasDocker, ciMode, "Trivy or Docker is required for enabled Trivy scans"));
+    results.push(
+      toolResult(
+        "trivy",
+        hasTrivy || hasDocker,
+        ciMode,
+        "Trivy or Docker is required for enabled Trivy scans"
+      )
+    );
   }
 
   if (config.scanners.container.enabled || config.target.dockerCompose) {
-    results.push(toolResult("docker", hasDocker, ciMode, "Docker is required for container scans or Docker Compose targets"));
+    results.push(
+      toolResult(
+        "docker",
+        hasDocker,
+        ciMode,
+        "Docker is required for container scans or Docker Compose targets"
+      )
+    );
   }
 
   if (config.scanners.dynamic.enabled) {
-    results.push(toolResult("zap", hasZap || hasDocker, ciMode, "ZAP CLI/API or Docker is required for dynamic scans"));
+    results.push(
+      toolResult(
+        "zap",
+        hasZap || hasDocker,
+        ciMode,
+        "ZAP CLI/API or Docker is required for dynamic scans"
+      )
+    );
   }
 
   if (config.scanners.ai.enabled) {
-    const hasAiConfig = config.scanners.ai.provider === "ollama"
-      || !!process.env.OPENAI_API_KEY
-      || !!process.env.ANTHROPIC_API_KEY;
-    results.push(toolResult("ai", hasAiConfig, ciMode, "AI provider configuration is required for AI scans"));
+    const hasAiConfig =
+      config.scanners.ai.provider === "ollama" ||
+      !!process.env.OPENAI_API_KEY ||
+      !!process.env.ANTHROPIC_API_KEY;
+    results.push(
+      toolResult("ai", hasAiConfig, ciMode, "AI provider configuration is required for AI scans")
+    );
   }
 
   return results;
@@ -110,10 +140,18 @@ async function checkTarget(config: SecurityBotConfig): Promise<CheckResult> {
   });
 
   if (healthy) {
-    return { name: "target", status: "ok", message: `Target reachable at ${config.target.baseUrl}` };
+    return {
+      name: "target",
+      status: "ok",
+      message: `Target reachable at ${config.target.baseUrl}`,
+    };
   }
 
-  return { name: "target", status: "fail", message: `Target not reachable at ${config.target.baseUrl}` };
+  return {
+    name: "target",
+    status: "fail",
+    message: `Target not reachable at ${config.target.baseUrl}`,
+  };
 }
 
 function toolResult(name: string, ok: boolean, ciMode: boolean, message: string): CheckResult {
@@ -129,4 +167,3 @@ function renderResults(results: CheckResult[]): void {
     console.log(`${label} ${result.name}: ${result.message}`);
   }
 }
-

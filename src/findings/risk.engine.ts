@@ -89,7 +89,7 @@ const SOURCE_CONFIDENCE: Record<string, number> = {
 
   // AI Security Tester - context-aware, tests business logic
   // Elevated confidence because AI understands endpoint semantics
-  "AI Security Tester": 0.80,
+  "AI Security Tester": 0.8,
 };
 
 // =============================================================================
@@ -100,79 +100,92 @@ const REMEDIATION_TEMPLATES: Record<string, Remediation> = {
   "SQL Injection": {
     priority: "immediate",
     action: "Use parameterized queries or prepared statements",
-    details: "Never concatenate user input into SQL queries. Use ORM/query builders with automatic escaping. Implement input validation as defense-in-depth.",
+    details:
+      "Never concatenate user input into SQL queries. Use ORM/query builders with automatic escaping. Implement input validation as defense-in-depth.",
     effort: "moderate",
   },
   Injection: {
     priority: "immediate",
     action: "Validate and sanitize all input, use safe APIs",
-    details: "Identify injection points and implement context-appropriate escaping. Use allowlists over blocklists.",
+    details:
+      "Identify injection points and implement context-appropriate escaping. Use allowlists over blocklists.",
     effort: "moderate",
   },
   "Command Injection": {
     priority: "immediate",
     action: "Avoid shell commands; use safe library functions",
-    details: "Replace shell execution with language-native APIs. If shell is required, use strict allowlist validation and never pass user input directly.",
+    details:
+      "Replace shell execution with language-native APIs. If shell is required, use strict allowlist validation and never pass user input directly.",
     effort: "moderate",
   },
   "Path Traversal": {
     priority: "high",
     action: "Validate file paths against allowlist",
-    details: "Normalize paths and verify they resolve within expected directories. Reject paths containing '..' or absolute paths from user input.",
+    details:
+      "Normalize paths and verify they resolve within expected directories. Reject paths containing '..' or absolute paths from user input.",
     effort: "minimal",
   },
   XSS: {
     priority: "high",
     action: "Encode output and implement Content-Security-Policy",
-    details: "Apply context-appropriate encoding (HTML, JS, URL). Use CSP headers to prevent inline scripts. Consider using auto-escaping template engines.",
+    details:
+      "Apply context-appropriate encoding (HTML, JS, URL). Use CSP headers to prevent inline scripts. Consider using auto-escaping template engines.",
     effort: "moderate",
   },
   "Cross-Site Scripting (XSS)": {
     priority: "high",
     action: "Encode output and implement Content-Security-Policy",
-    details: "Apply context-appropriate encoding. Use CSP headers. Consider auto-escaping template engines.",
+    details:
+      "Apply context-appropriate encoding. Use CSP headers. Consider auto-escaping template engines.",
     effort: "moderate",
   },
   "Broken Authentication": {
     priority: "high",
     action: "Implement proper authentication checks",
-    details: "Verify authentication on every request. Use secure session management. Implement rate limiting and account lockout.",
+    details:
+      "Verify authentication on every request. Use secure session management. Implement rate limiting and account lockout.",
     effort: "moderate",
   },
   "Broken Access Control": {
     priority: "high",
     action: "Implement authorization checks at every endpoint",
-    details: "Deny by default. Check user permissions server-side for every resource access. Log access control failures.",
+    details:
+      "Deny by default. Check user permissions server-side for every resource access. Log access control failures.",
     effort: "moderate",
   },
   "Information Disclosure": {
     priority: "medium",
     action: "Remove debug endpoints and sensitive data from responses",
-    details: "Disable debug mode in production. Review API responses for unnecessary data. Implement proper error handling that doesn't leak internals.",
+    details:
+      "Disable debug mode in production. Review API responses for unnecessary data. Implement proper error handling that doesn't leak internals.",
     effort: "minimal",
   },
   "Sensitive Data Exposure": {
     priority: "high",
     action: "Encrypt sensitive data and restrict access",
-    details: "Use encryption at rest and in transit. Minimize data collection. Implement proper access controls.",
+    details:
+      "Use encryption at rest and in transit. Minimize data collection. Implement proper access controls.",
     effort: "significant",
   },
   "Security Misconfiguration": {
     priority: "medium",
     action: "Review and harden security configuration",
-    details: "Add security headers (CSP, X-Frame-Options, etc). Disable unnecessary features. Keep software updated.",
+    details:
+      "Add security headers (CSP, X-Frame-Options, etc). Disable unnecessary features. Keep software updated.",
     effort: "minimal",
   },
   "Hardcoded Secret": {
     priority: "high",
     action: "Move secrets to environment variables or secret manager",
-    details: "Remove secrets from code. Use secret management solutions. Rotate exposed credentials immediately.",
+    details:
+      "Remove secrets from code. Use secret management solutions. Rotate exposed credentials immediately.",
     effort: "minimal",
   },
   CSRF: {
     priority: "medium",
     action: "Implement CSRF tokens on state-changing operations",
-    details: "Use synchronizer token pattern. Verify Origin/Referer headers. Use SameSite cookie attribute.",
+    details:
+      "Use synchronizer token pattern. Verify Origin/Referer headers. Use SameSite cookie attribute.",
     effort: "moderate",
   },
   "Container Vulnerability": {
@@ -184,13 +197,15 @@ const REMEDIATION_TEMPLATES: Record<string, Remediation> = {
   "OS Package Vulnerability": {
     priority: "medium",
     action: "Update system packages to patched versions",
-    details: "Apply security updates regularly. Use automated patch management. Consider container image rebuilds.",
+    details:
+      "Apply security updates regularly. Use automated patch management. Consider container image rebuilds.",
     effort: "minimal",
   },
   "Dependency Vulnerability": {
     priority: "medium",
     action: "Update vulnerable dependencies",
-    details: "Run dependency audit regularly. Use automated dependency updates. Review transitive dependencies.",
+    details:
+      "Run dependency audit regularly. Use automated dependency updates. Review transitive dependencies.",
     effort: "minimal",
   },
   "NPM Dependency Vulnerability": {
@@ -210,7 +225,8 @@ const REMEDIATION_TEMPLATES: Record<string, Remediation> = {
 const DEFAULT_REMEDIATION: Remediation = {
   priority: "medium",
   action: "Review and address the security finding",
-  details: "Analyze the finding in context of your application. Implement appropriate controls based on risk level.",
+  details:
+    "Analyze the finding in context of your application. Implement appropriate controls based on risk level.",
   effort: "moderate",
 };
 
@@ -321,7 +337,7 @@ export class RiskEngine {
       path.includes("/admin") ||
       path.includes("/user") ||
       path.includes("/private") ||
-      path.includes("/api/") && !path.includes("/public");
+      (path.includes("/api/") && !path.includes("/public"));
 
     return {
       method,
@@ -491,9 +507,7 @@ export class RiskEngine {
       "Path Traversal",
     ];
 
-    return exposedCategories.some((cat) =>
-      raw.category.toLowerCase().includes(cat.toLowerCase())
-    );
+    return exposedCategories.some((cat) => raw.category.toLowerCase().includes(cat.toLowerCase()));
   }
 
   private groupByCategory(findings: Finding[]): Record<string, Finding[]> {
@@ -514,8 +528,7 @@ export class RiskEngine {
 
     // Recalculate risk score
     const severityWeight = SEVERITY_WEIGHTS[finding.severity] / 4;
-    const newRiskScore =
-      severityWeight * 0.3 + finding.exploitability * 0.4 + newConfidence * 0.3;
+    const newRiskScore = severityWeight * 0.3 + finding.exploitability * 0.4 + newConfidence * 0.3;
 
     return {
       ...finding,

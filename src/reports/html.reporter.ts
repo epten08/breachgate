@@ -43,9 +43,7 @@ export class HtmlReporter {
     const verdict = options.verdict ?? this.attackAnalyzer.generateVerdict(findings);
     const sorted = sortByRisk(findings);
     const timestamp = new Date().toISOString();
-    const duration = options.scanDuration
-      ? `${(options.scanDuration / 1000).toFixed(1)}s`
-      : "";
+    const duration = options.scanDuration ? `${(options.scanDuration / 1000).toFixed(1)}s` : "";
 
     const counts = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
     for (const f of findings) {
@@ -196,11 +194,14 @@ export class HtmlReporter {
     </div>
   </div>
 
-  ${sorted.length === 0 ? `
+  ${
+    sorted.length === 0
+      ? `
   <div class="empty">
     <div style="font-size:2.5rem;margin-bottom:8px">✅</div>
     <div>No security findings detected.</div>
-  </div>` : `
+  </div>`
+      : `
   <div class="filters">
     <button class="filter-btn active" data-sev="ALL">All (${findings.length})</button>
     ${counts.CRITICAL > 0 ? `<button class="filter-btn" data-sev="CRITICAL">Critical (${counts.CRITICAL})</button>` : ""}
@@ -211,14 +212,15 @@ export class HtmlReporter {
   </div>
   <div class="cat-filters">
     <button class="cat-btn active" data-cat="ALL">All categories</button>
-    ${[...new Set(sorted.map(f => f.category))].map(cat =>
-      `<button class="cat-btn" data-cat="${esc(cat)}">${esc(cat)}</button>`
-    ).join("")}
+    ${[...new Set(sorted.map((f) => f.category))]
+      .map((cat) => `<button class="cat-btn" data-cat="${esc(cat)}">${esc(cat)}</button>`)
+      .join("")}
   </div>
 
   <div id="findings-list">
     ${sorted.map((f, i) => this.renderFinding(f, i)).join("\n    ")}
-  </div>`}
+  </div>`
+  }
 
 </div>
 
@@ -293,7 +295,8 @@ function copyEvidence(btn) {
     const textContent = [f.title, f.category, f.endpoint ?? "", f.evidence ?? ""]
       .join(" ")
       .toLowerCase();
-    const isConfirmed = f.sources.includes("AI Security Tester") || f.sources.includes("OWASP ZAP API");
+    const isConfirmed =
+      f.sources.includes("AI Security Tester") || f.sources.includes("OWASP ZAP API");
 
     return `<div class="finding-card" data-sev="${f.severity}" data-cat="${esc(f.category)}" data-text="${esc(textContent)}" id="finding-${index}">
       <div class="finding-header">

@@ -20,9 +20,7 @@ export async function waitForHealthy(options: HealthCheckOptions): Promise<boole
   } = options;
 
   // Build the health check URL - try configured endpoint, /health, or root
-  const healthPaths = healthEndpoint
-    ? [healthEndpoint]
-    : ["/health", "/", "/api/health"];
+  const healthPaths = healthEndpoint ? [healthEndpoint] : ["/health", "/", "/api/health"];
 
   const startTime = Date.now();
   let attempts = 0;

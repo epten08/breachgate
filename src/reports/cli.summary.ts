@@ -71,7 +71,9 @@ export class CliSummary {
       console.log(chalk.white(`  Total Findings: ${chalk.bold(total)}`));
 
       if (critical > 0) {
-        console.log(chalk.red.bold(`  ⚠ ${critical} CRITICAL vulnerabilities require immediate attention`));
+        console.log(
+          chalk.red.bold(`  ⚠ ${critical} CRITICAL vulnerabilities require immediate attention`)
+        );
       }
       if (high > 0) {
         console.log(chalk.yellow(`  ⚠ ${high} HIGH severity issues should be addressed promptly`));
@@ -138,7 +140,11 @@ export class CliSummary {
 
       if (this.options.verbose) {
         console.log(chalk.gray(`     Category: ${finding.category}`));
-        console.log(chalk.gray(`     Risk: ${finding.riskScore.toFixed(2)} | Confidence: ${finding.confidence.toFixed(2)} | Sources: ${finding.sources.join(", ")}`));
+        console.log(
+          chalk.gray(
+            `     Risk: ${finding.riskScore.toFixed(2)} | Confidence: ${finding.confidence.toFixed(2)} | Sources: ${finding.sources.join(", ")}`
+          )
+        );
 
         if (finding.cve) {
           console.log(chalk.gray(`     CVE: ${finding.cve}`));
@@ -170,7 +176,9 @@ export class CliSummary {
     }
 
     if (findings.length > this.options.maxFindings) {
-      console.log(chalk.gray(`  ... and ${findings.length - this.options.maxFindings} more findings`));
+      console.log(
+        chalk.gray(`  ... and ${findings.length - this.options.maxFindings} more findings`)
+      );
     }
 
     console.log();
@@ -222,24 +230,48 @@ export class CliSummary {
 
     switch (verdict.verdict) {
       case "UNSAFE":
-        console.log(chalk.bgRed.white.bold("  ╔════════════════════════════════════════════════════════╗"));
-        console.log(chalk.bgRed.white.bold("  ║            ⛔  UNSAFE TO DEPLOY  ⛔                    ║"));
-        console.log(chalk.bgRed.white.bold("  ╚════════════════════════════════════════════════════════╝"));
+        console.log(
+          chalk.bgRed.white.bold("  ╔════════════════════════════════════════════════════════╗")
+        );
+        console.log(
+          chalk.bgRed.white.bold("  ║            ⛔  UNSAFE TO DEPLOY  ⛔                    ║")
+        );
+        console.log(
+          chalk.bgRed.white.bold("  ╚════════════════════════════════════════════════════════╝")
+        );
         break;
       case "REVIEW_REQUIRED":
-        console.log(chalk.bgYellow.black.bold("  ╔════════════════════════════════════════════════════════╗"));
-        console.log(chalk.bgYellow.black.bold("  ║           ⚠️  REVIEW REQUIRED  ⚠️                      ║"));
-        console.log(chalk.bgYellow.black.bold("  ╚════════════════════════════════════════════════════════╝"));
+        console.log(
+          chalk.bgYellow.black.bold("  ╔════════════════════════════════════════════════════════╗")
+        );
+        console.log(
+          chalk.bgYellow.black.bold("  ║           ⚠️  REVIEW REQUIRED  ⚠️                      ║")
+        );
+        console.log(
+          chalk.bgYellow.black.bold("  ╚════════════════════════════════════════════════════════╝")
+        );
         break;
       case "INCONCLUSIVE":
-        console.log(chalk.bgMagenta.white.bold("  ╔════════════════════════════════════════════════════════╗"));
-        console.log(chalk.bgMagenta.white.bold("  ║           ❓  SCAN INCOMPLETE  ❓                      ║"));
-        console.log(chalk.bgMagenta.white.bold("  ╚════════════════════════════════════════════════════════╝"));
+        console.log(
+          chalk.bgMagenta.white.bold("  ╔════════════════════════════════════════════════════════╗")
+        );
+        console.log(
+          chalk.bgMagenta.white.bold("  ║           ❓  SCAN INCOMPLETE  ❓                      ║")
+        );
+        console.log(
+          chalk.bgMagenta.white.bold("  ╚════════════════════════════════════════════════════════╝")
+        );
         break;
       case "SAFE":
-        console.log(chalk.bgGreen.white.bold("  ╔════════════════════════════════════════════════════════╗"));
-        console.log(chalk.bgGreen.white.bold("  ║            ✅  SAFE TO DEPLOY  ✅                      ║"));
-        console.log(chalk.bgGreen.white.bold("  ╚════════════════════════════════════════════════════════╝"));
+        console.log(
+          chalk.bgGreen.white.bold("  ╔════════════════════════════════════════════════════════╗")
+        );
+        console.log(
+          chalk.bgGreen.white.bold("  ║            ✅  SAFE TO DEPLOY  ✅                      ║")
+        );
+        console.log(
+          chalk.bgGreen.white.bold("  ╚════════════════════════════════════════════════════════╝")
+        );
         break;
     }
 
@@ -270,16 +302,15 @@ export class CliSummary {
     console.log();
 
     for (const corr of topEndpoints) {
-      const riskColor = corr.combinedRisk >= 0.7 ? chalk.red :
-                        corr.combinedRisk >= 0.5 ? chalk.yellow :
-                        chalk.blue;
+      const riskColor =
+        corr.combinedRisk >= 0.7 ? chalk.red : corr.combinedRisk >= 0.5 ? chalk.yellow : chalk.blue;
       const riskBar = this.renderRiskBar(corr.combinedRisk);
 
       console.log(`  ${riskColor(corr.endpoint || "no-endpoint")}`);
       console.log(`     Risk: ${riskBar} ${(corr.combinedRisk * 100).toFixed(0)}%`);
 
       // List findings for this endpoint
-      const findingTypes = [...new Set(corr.findings.map(f => f.category))];
+      const findingTypes = [...new Set(corr.findings.map((f) => f.category))];
       console.log(chalk.gray(`     ├── ${findingTypes.join(", ")}`));
 
       // Show attack chains if any
@@ -297,10 +328,8 @@ export class CliSummary {
     const filled = Math.round(risk * width);
     const empty = width - filled;
 
-    const color = risk >= 0.7 ? chalk.red :
-                  risk >= 0.5 ? chalk.yellow :
-                  risk >= 0.3 ? chalk.blue :
-                  chalk.green;
+    const color =
+      risk >= 0.7 ? chalk.red : risk >= 0.5 ? chalk.yellow : risk >= 0.3 ? chalk.blue : chalk.green;
 
     return color("█".repeat(filled)) + chalk.gray("░".repeat(empty));
   }
@@ -309,7 +338,7 @@ export class CliSummary {
     if (verdict.attackChains.length === 0) return;
 
     // Deduplicate chains by name
-    const uniqueChains = new Map<string, typeof verdict.attackChains[0]>();
+    const uniqueChains = new Map<string, (typeof verdict.attackChains)[0]>();
     for (const chain of verdict.attackChains) {
       if (!uniqueChains.has(chain.name)) {
         uniqueChains.set(chain.name, chain);
@@ -320,9 +349,12 @@ export class CliSummary {
     console.log();
 
     for (const chain of uniqueChains.values()) {
-      const impactColor = chain.impact === "critical" ? chalk.red :
-                          chain.impact === "high" ? chalk.yellow :
-                          chalk.blue;
+      const impactColor =
+        chain.impact === "critical"
+          ? chalk.red
+          : chain.impact === "high"
+            ? chalk.yellow
+            : chalk.blue;
 
       console.log(`  ${impactColor("→")} ${chain.name}`);
       console.log(chalk.gray(`     Likelihood: ${chain.likelihood} | Impact: ${chain.impact}`));
@@ -344,12 +376,20 @@ export class CliSummary {
     console.log();
 
     for (const rem of remediations) {
-      const priorityColor = rem.priority === "immediate" ? chalk.red :
-                            rem.priority === "high" ? chalk.yellow :
-                            chalk.blue;
-      const priorityIcon = rem.priority === "immediate" ? "🚨" :
-                           rem.priority === "high" ? "⚠️" :
-                           rem.priority === "medium" ? "📋" : "📝";
+      const priorityColor =
+        rem.priority === "immediate"
+          ? chalk.red
+          : rem.priority === "high"
+            ? chalk.yellow
+            : chalk.blue;
+      const priorityIcon =
+        rem.priority === "immediate"
+          ? "🚨"
+          : rem.priority === "high"
+            ? "⚠️"
+            : rem.priority === "medium"
+              ? "📋"
+              : "📝";
 
       console.log(`  ${priorityIcon} ${priorityColor(rem.finding.category)}`);
       console.log(chalk.gray(`     Endpoint: ${rem.endpoint}`));
@@ -386,7 +426,11 @@ export class CliSummary {
         break;
       case "REVIEW_REQUIRED":
         console.log(chalk.yellow.bold("  DEPLOYMENT REQUIRES REVIEW"));
-        console.log(chalk.yellow(`  ${verdict.criticalFindings.length} exploitable finding(s) need security review.`));
+        console.log(
+          chalk.yellow(
+            `  ${verdict.criticalFindings.length} exploitable finding(s) need security review.`
+          )
+        );
         break;
       case "SAFE":
         console.log(chalk.green.bold("  DEPLOYMENT APPROVED"));

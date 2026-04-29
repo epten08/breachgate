@@ -104,9 +104,17 @@ export class TestExecutor {
         const ctrl = new AbortController();
         const tid = setTimeout(() => ctrl.abort(), this.timeout);
         const start = Date.now();
-        const resp = await fetch(url.toString(), { method: tc.request.method, headers, signal: ctrl.signal });
+        const resp = await fetch(url.toString(), {
+          method: tc.request.method,
+          headers,
+          signal: ctrl.signal,
+        });
         clearTimeout(tid);
-        baselines.set(key, { status: resp.status, body: await resp.text(), timing: Date.now() - start });
+        baselines.set(key, {
+          status: resp.status,
+          body: await resp.text(),
+          timing: Date.now() - start,
+        });
         logger.debug(`Baseline captured for ${key}: ${resp.status}`);
       } catch {
         // Baseline capture is best-effort; absence does not block attack tests.
@@ -157,10 +165,20 @@ export class TestExecutor {
       const responseHeaders = this.headersToObject(response.headers);
 
       const { isVulnerable, matchedCriteria } = this.evaluateResponse(
-        testCase, response.status, responseHeaders, body, timing, baseline
+        testCase,
+        response.status,
+        responseHeaders,
+        body,
+        timing,
+        baseline
       );
 
-      return { testCase, response: { status: response.status, headers: responseHeaders, body, timing }, isVulnerable, matchedCriteria };
+      return {
+        testCase,
+        response: { status: response.status, headers: responseHeaders, body, timing },
+        isVulnerable,
+        matchedCriteria,
+      };
     } catch (err) {
       clearTimeout(timeoutId);
       throw err;
@@ -169,7 +187,9 @@ export class TestExecutor {
 
   private headersToObject(headers: Headers): Record<string, string> {
     const obj: Record<string, string> = {};
-    headers.forEach((value, key) => { obj[key.toLowerCase()] = value; });
+    headers.forEach((value, key) => {
+      obj[key.toLowerCase()] = value;
+    });
     return obj;
   }
 
@@ -221,7 +241,11 @@ export class TestExecutor {
         }
       }
 
-      const securityHeaders = ["x-content-type-options", "x-frame-options", "strict-transport-security"];
+      const securityHeaders = [
+        "x-content-type-options",
+        "x-frame-options",
+        "strict-transport-security",
+      ];
       for (const header of securityHeaders) {
         if (!headers[header] && !expected.headerMissing?.includes(header)) {
           matchedCriteria.push(`Missing security header: ${header}`);
@@ -240,7 +264,10 @@ export class TestExecutor {
     // Definitive exploitation indicators — check on all non-auth-rejection responses.
     if (!isAuthRejection) {
       const vulnIndicators = [
-        { pattern: /sql.*error|syntax.*error|mysql.*error|postgresql.*error|sqlite.*error/i, name: "SQL error" },
+        {
+          pattern: /sql.*error|syntax.*error|mysql.*error|postgresql.*error|sqlite.*error/i,
+          name: "SQL error",
+        },
         { pattern: /stack.*trace|exception.*at\s+\w+\./i, name: "Stack trace" },
         { pattern: /<script[\s>]|javascript:/i, name: "Unescaped script" },
         { pattern: /password\s*[:=]|api[_-]?key\s*[:=]|secret\s*[:=]/i, name: "Sensitive data" },
@@ -276,9 +303,12 @@ export class TestExecutor {
     const url = new URL(testCase.request.path, this.ctx.targetUrl);
     const safety = this.ctx.config.safety;
 
-    if (!isUrlInScope(url, this.ctx.targetUrl, safety)) return `URL ${url.hostname} is outside configured scope`;
-    if (isPathExcluded(url.pathname, safety)) return `path ${url.pathname} is excluded by safety.excludedPaths`;
-    if (!allowsDestructiveMethod(testCase.request.method, safety)) return `method ${testCase.request.method.toUpperCase()} is blocked by safety profile`;
+    if (!isUrlInScope(url, this.ctx.targetUrl, safety))
+      return `URL ${url.hostname} is outside configured scope`;
+    if (isPathExcluded(url.pathname, safety))
+      return `path ${url.pathname} is excluded by safety.excludedPaths`;
+    if (!allowsDestructiveMethod(testCase.request.method, safety))
+      return `method ${testCase.request.method.toUpperCase()} is blocked by safety profile`;
 
     return undefined;
   }
