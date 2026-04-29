@@ -1,5 +1,16 @@
 # Baselines — Suppressing Known Findings
 
+Breach Gate has two suppression mechanisms. Use the right one for the job:
+
+| Mechanism | When to use |
+|-----------|-------------|
+| `.breach-gate-baseline.yml` | **Temporary waivers** — tracked tickets, no upstream fix yet, sprint backlog items. Findings reappear when the entry expires. |
+| `.breachgateignore` | **Permanent acceptable findings** — intentional behaviour, headers handled at the CDN, internal-only endpoints. Findings never appear in reports. |
+
+This document covers `.breach-gate-baseline.yml`. For `.breachgateignore`, see the [Finding Suppression section in the README](../README.md#finding-suppression).
+
+---
+
 A baseline lets you acknowledge known findings so they don't block CI while your team works on a fix, without hiding new findings that appear later.
 
 ## The Problem

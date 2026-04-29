@@ -286,6 +286,46 @@ export class TestGenerator {
       });
     }
 
+    // SSRF — endpoints accepting URLs, webhooks, or file paths (task 5)
+    if (summary.includes("url") || summary.includes("webhook") || summary.includes("import") || summary.includes("fetch")) {
+      tests.push({
+        name: `SSRF - ${label}`,
+        endpoint: label,
+        category: "SSRF",
+        description: "Test for server-side request forgery via attacker-controlled URL parameter",
+        request: {
+          method,
+          path: ["GET"].includes(method) ? `${path}?url=http://169.254.169.254/latest/meta-data` : path,
+          body: ["POST", "PUT", "PATCH"].includes(method)
+            ? { url: "http://169.254.169.254/latest/meta-data", webhook: "http://169.254.169.254/latest/meta-data" }
+            : undefined,
+        },
+        expectedVulnerable: {
+          statusCodes: [200],
+          bodyContains: ["169.254", "ami-id", "instance-id", "amazonaws"],
+        },
+      });
+    }
+
+    // Mass assignment — POST/PUT body endpoints (task 6)
+    if (["POST", "PUT", "PATCH"].includes(method)) {
+      tests.push({
+        name: `Mass Assignment - ${label}`,
+        endpoint: label,
+        category: "Mass Assignment",
+        description: "Test whether privileged fields (role, is_admin) are accepted and persisted",
+        request: {
+          method,
+          path,
+          body: { role: "admin", is_admin: true, admin: true, verified: true },
+        },
+        expectedVulnerable: {
+          statusCodes: [200, 201],
+          bodyContains: ["is_admin", "admin"],
+        },
+      });
+    }
+
     // Info disclosure — always check debug-style endpoints
     tests.push({
       name: `Info Disclosure - ${label}`,
@@ -295,7 +335,7 @@ export class TestGenerator {
       request: { method, path },
       expectedVulnerable: {
         statusCodes: [200],
-        bodyContains: ["password", "secret", "token", "debug", "stack", "internal"],
+        bodyContains: ["password", "secret", "debug", "stack", "internal"],
       },
     });
 

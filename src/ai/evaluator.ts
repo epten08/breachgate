@@ -170,6 +170,42 @@ export class TestEvaluator {
       };
     }
 
+    // SSRF
+    if (category.includes("ssrf") || category.includes("server-side request")) {
+      return {
+        type: "Server-Side Request Forgery (SSRF)",
+        severity: "HIGH",
+        recommendation: "Validate and allowlist URLs accepted by the server. Never fetch attacker-supplied URLs without strict validation.",
+      };
+    }
+
+    // Mass Assignment
+    if (category.includes("mass assignment") || criteriaStr.includes("mass assignment")) {
+      return {
+        type: "Mass Assignment",
+        severity: "HIGH",
+        recommendation: "Use explicit allowlists for accepted request fields. Never bind request bodies directly to model objects.",
+      };
+    }
+
+    // JWT attacks
+    if (category.includes("jwt") || criteriaStr.includes("jwt") || criteriaStr.includes("algorithm confusion")) {
+      return {
+        type: "Broken Authentication (JWT)",
+        severity: "CRITICAL",
+        recommendation: "Enforce algorithm allowlists server-side. Validate all JWT claims. Reject tokens with alg:none.",
+      };
+    }
+
+    // Blind injection (time-based)
+    if (criteriaStr.includes("blind injection") || criteriaStr.includes("response delayed")) {
+      return {
+        type: "Blind Injection (Time-based)",
+        severity: "CRITICAL",
+        recommendation: "Use parameterized queries and avoid passing user input to system calls. Investigate time-delay payloads manually to confirm.",
+      };
+    }
+
     // Security headers — only report when there is no other substantive finding.
     // All criteria being header-miss only means no actual exploitation occurred.
     if (criteriaStr.includes("security header")) {

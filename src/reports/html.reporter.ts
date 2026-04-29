@@ -91,7 +91,7 @@ export class HtmlReporter {
   .stat-num { font-size: 2rem; font-weight: 700; }
   .stat-label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-top: 2px; }
 
-  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; align-items: center; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
   .filter-btn {
     padding: 5px 14px; border-radius: 20px; border: 1px solid #cbd5e1;
     background: white; cursor: pointer; font-size: 0.8rem; font-weight: 500; color: #475569;
@@ -104,6 +104,12 @@ export class HtmlReporter {
   .filter-btn.active[data-sev="HIGH"] { background: #ea580c; }
   .filter-btn.active[data-sev="MEDIUM"] { background: #d97706; }
   .filter-btn.active[data-sev="LOW"] { background: #65a30d; }
+  .cat-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+  .cat-btn {
+    padding: 3px 10px; border-radius: 4px; border: 1px solid #cbd5e1;
+    background: white; cursor: pointer; font-size: 0.75rem; color: #475569;
+  }
+  .cat-btn.active { background: #0f172a; color: white; border-color: #0f172a; }
   .search { margin-left: auto; padding: 5px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.85rem; width: 220px; }
   .search:focus { outline: none; border-color: #2563eb; }
 
@@ -129,7 +135,11 @@ export class HtmlReporter {
   .finding-card.open .finding-body { display: block; }
   .finding-body dt { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 12px; }
   .finding-body dd { font-size: 0.9rem; margin-top: 3px; }
-  .evidence { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; margin-top: 4px; color: #334155; }
+  .evidence-wrap { position: relative; margin-top: 4px; }
+  .evidence { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; color: #334155; }
+  .copy-btn { position: absolute; top: 6px; right: 8px; padding: 2px 8px; font-size: 0.7rem; border: 1px solid #cbd5e1; border-radius: 4px; background: white; cursor: pointer; color: #475569; }
+  .copy-btn:hover { background: #f1f5f9; }
+  .copy-btn.copied { color: #16a34a; border-color: #16a34a; }
   .cve-link { font-family: monospace; font-size: 0.85rem; }
 
   .empty { text-align: center; padding: 48px; color: #64748b; }
@@ -199,6 +209,12 @@ export class HtmlReporter {
     ${counts.LOW > 0 ? `<button class="filter-btn" data-sev="LOW">Low (${counts.LOW})</button>` : ""}
     <input class="search" type="search" placeholder="Search findings…" aria-label="Search findings">
   </div>
+  <div class="cat-filters">
+    <button class="cat-btn active" data-cat="ALL">All categories</button>
+    ${[...new Set(sorted.map(f => f.category))].map(cat =>
+      `<button class="cat-btn" data-cat="${esc(cat)}">${esc(cat)}</button>`
+    ).join("")}
+  </div>
 
   <div id="findings-list">
     ${sorted.map((f, i) => this.renderFinding(f, i)).join("\n    ")}
@@ -211,16 +227,18 @@ export class HtmlReporter {
 <script>
 (function () {
   var activeFilter = "ALL";
+  var activeCategory = "ALL";
   var searchQuery = "";
 
   function applyFilters() {
-    var cards = document.querySelectorAll(".finding-card");
-    cards.forEach(function (card) {
+    document.querySelectorAll(".finding-card").forEach(function (card) {
       var sev = card.getAttribute("data-sev");
+      var cat = card.getAttribute("data-cat");
       var text = card.getAttribute("data-text") || "";
       var sevMatch = activeFilter === "ALL" || sev === activeFilter;
-      var searchMatch = !searchQuery || text.includes(searchQuery.toLowerCase());
-      card.style.display = (sevMatch && searchMatch) ? "" : "none";
+      var catMatch = activeCategory === "ALL" || cat === activeCategory;
+      var searchMatch = !searchQuery || text.includes(searchQuery);
+      card.style.display = (sevMatch && catMatch && searchMatch) ? "" : "none";
     });
   }
 
@@ -228,6 +246,15 @@ export class HtmlReporter {
     btn.addEventListener("click", function () {
       activeFilter = btn.getAttribute("data-sev");
       document.querySelectorAll(".filter-btn").forEach(function (b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      applyFilters();
+    });
+  });
+
+  document.querySelectorAll(".cat-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      activeCategory = btn.getAttribute("data-cat");
+      document.querySelectorAll(".cat-btn").forEach(function (b) { b.classList.remove("active"); });
       btn.classList.add("active");
       applyFilters();
     });
@@ -247,6 +274,15 @@ export class HtmlReporter {
     });
   });
 })();
+
+function copyEvidence(btn) {
+  var evidence = btn.nextElementSibling.textContent;
+  navigator.clipboard.writeText(evidence).then(function () {
+    btn.textContent = "Copied!";
+    btn.classList.add("copied");
+    setTimeout(function () { btn.textContent = "Copy"; btn.classList.remove("copied"); }, 2000);
+  });
+}
 </script>
 </body>
 </html>`;
@@ -259,7 +295,7 @@ export class HtmlReporter {
       .toLowerCase();
     const isConfirmed = f.sources.includes("AI Security Tester") || f.sources.includes("OWASP ZAP API");
 
-    return `<div class="finding-card" data-sev="${f.severity}" data-text="${esc(textContent)}" id="finding-${index}">
+    return `<div class="finding-card" data-sev="${f.severity}" data-cat="${esc(f.category)}" data-text="${esc(textContent)}" id="finding-${index}">
       <div class="finding-header">
         <span class="sev-badge" style="background:${color}">${f.severity}</span>
         <span class="finding-title">${esc(f.title)}</span>
@@ -270,7 +306,7 @@ export class HtmlReporter {
       <div class="finding-body">
         <dl>
           <dt>Category</dt><dd>${esc(f.category)}</dd>
-          ${f.evidence ? `<dt>Evidence</dt><dd><div class="evidence">${esc(f.evidence)}</div></dd>` : ""}
+          ${f.evidence ? `<dt>Evidence</dt><dd><div class="evidence-wrap"><button class="copy-btn" onclick="copyEvidence(this)">Copy</button><div class="evidence">${esc(f.evidence)}</div></div></dd>` : ""}
           ${f.sources.length > 0 ? `<dt>Source</dt><dd>${esc(f.sources.join(", "))}</dd>` : ""}
           ${f.cve ? `<dt>CVE</dt><dd><a class="cve-link" href="https://nvd.nist.gov/vuln/detail/${esc(f.cve)}" target="_blank" rel="noopener">${esc(f.cve)}</a></dd>` : ""}
           ${f.cwe ? `<dt>CWE</dt><dd>${esc(f.cwe)}</dd>` : ""}

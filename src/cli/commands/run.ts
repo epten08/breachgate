@@ -16,6 +16,7 @@ import { TrivyStaticScanner } from "../../scanners/static/trivy.static.js";
 import { TrivyImageScanner } from "../../scanners/container/trivy.image.js";
 import { ZapApiScanner } from "../../scanners/dynamic/zap.api.js";
 import { AIScanner } from "../../scanners/ai/ai.scanner.js";
+import { GraphQLScanner } from "../../scanners/graphql/graphql.scanner.js";
 import { Scanner, ScannerCategory } from "../../scanners/scanner.js";
 import { ReportGenerator } from "../../reports/report.generator.js";
 import {
@@ -25,6 +26,7 @@ import {
   PolicyEvaluation,
   resolvePolicyRules,
 } from "../../policy/policy.js";
+import { loadSuppressionRules, applySuppressions } from "../../policy/suppression.js";
 import { resolveAuthContexts } from "../../auth/auth.js";
 import {
   enforceTargetSafety,
@@ -353,10 +355,19 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
   // 3. Otherwise use attack feasibility analysis
 
   const attackAnalyzer = new AttackAnalyzer();
-  const baselineApplied = applyBaseline(scanResult.findings, baselineInfo.baseline);
+
+  // Apply .breachgateignore suppressions before verdict and policy evaluation.
+  const suppressionRules = loadSuppressionRules(undefined, config.configFilePath);
+  const suppressionResult = applySuppressions(scanResult.findings, suppressionRules);
+  const findingsAfterSuppression = suppressionResult.effectiveFindings;
+  if (suppressionResult.suppressedCount > 0 && !isCiMode) {
+    logger.info(`${suppressionResult.suppressedCount} finding(s) suppressed by .breachgateignore`);
+  }
+
+  const baselineApplied = applyBaseline(findingsAfterSuppression, baselineInfo.baseline);
   const findingsForVerdict = policy
     ? baselineApplied.effectiveFindings
-    : scanResult.findings;
+    : findingsAfterSuppression;
 
   // Use generateVerdictWithStatus to properly handle scanner failures
   const verdict = attackAnalyzer.generateVerdictWithStatus(findingsForVerdict, {
@@ -542,6 +553,11 @@ async function createScanners(config: SecurityBotConfig): Promise<Scanner[]> {
     new TrivyImageScanner(),
     new ZapApiScanner(),
   ];
+
+  // Add GraphQL scanner if configured
+  if (config.scanners.graphql?.enabled) {
+    scanners.push(new GraphQLScanner());
+  }
 
   // Add AI scanner if configured
   if (config.scanners.ai.enabled && config.scanners.ai.provider) {

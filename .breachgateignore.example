@@ -1,0 +1,22 @@
+# .breachgateignore
+# Suppress specific findings by ID, pattern, or endpoint.
+# Rules with an expires date are automatically re-enabled after that date.
+
+suppressions:
+  # Suppress by exact finding ID (from the JSON report)
+  - id: "7ba985bc-6885-4c1d-8666-92f317402bd4"
+    reason: "Rate limiting is handled by the upstream load balancer, not the API itself"
+
+  # Suppress by title/category pattern (case-insensitive substring match)
+  - pattern: "Missing security header"
+    reason: "Security headers are added at the CDN layer, not the origin server"
+
+  # Suppress a pattern scoped to a specific endpoint
+  - pattern: "Path Traversal"
+    endpoint: "/api/file"
+    reason: "Intentional design — file endpoint is internal-only and behind VPN"
+    expires: "2026-09-01"
+
+  # Suppress all findings on a specific endpoint
+  - endpoint: "/api/debug"
+    reason: "Debug endpoint is disabled in production via feature flag"

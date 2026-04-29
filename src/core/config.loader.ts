@@ -93,6 +93,10 @@ export interface ScannersConfig {
       maxDuration?: number;
     };
   };
+  graphql?: {
+    enabled: boolean;
+    endpoint?: string;
+  };
   ai: {
     enabled: boolean;
     provider?: "ollama" | "openai" | "anthropic";

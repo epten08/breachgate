@@ -22,6 +22,12 @@ export interface TestResult {
   matchedCriteria: string[];
 }
 
+interface BaselineResponse {
+  status: number;
+  body: string;
+  timing: number;
+}
+
 export class TestExecutor {
   private ctx: ExecutionContext;
   private timeout: number;
@@ -32,38 +38,97 @@ export class TestExecutor {
     this.timeout = timeout;
   }
 
-  async execute(testCases: SecurityTestCase[]): Promise<TestResult[]> {
-    const results: TestResult[] = [];
+  // Task 1: parallel execution with a concurrency cap so we don't flood the target.
+  // Task 2: captures benign baseline responses before attack tests so bodyContains
+  //         matches that appear in normal responses are not counted as evidence.
+  async execute(testCases: SecurityTestCase[], concurrency = 5): Promise<TestResult[]> {
+    const baselines = await this.captureBaselines(testCases);
+
+    const settled: TestResult[] = [];
+    const active = new Set<Promise<void>>();
 
     for (const testCase of testCases) {
-      logger.debug(`Executing: ${testCase.name}`);
+      const skipReason = this.getSkipReason(testCase);
+      if (skipReason) {
+        logger.debug(`Skipping: ${testCase.name} - ${skipReason}`);
+        continue;
+      }
 
-      try {
-        const skipReason = this.getSkipReason(testCase);
-        if (skipReason) {
-          logger.debug(`Skipping: ${testCase.name} - ${skipReason}`);
-          continue;
+      const task = (async () => {
+        try {
+          await this.applyThrottle();
+          const key = this.endpointKey(testCase);
+          const result = await this.executeTest(testCase, baselines.get(key));
+          settled.push(result);
+          if (result.isVulnerable) {
+            logger.finding(this.inferSeverity(testCase.category), testCase.name);
+          }
+        } catch (err) {
+          logger.debug(`Test failed: ${testCase.name} - ${(err as Error).message}`);
         }
+      })();
 
-        await this.applyThrottle();
-        const result = await this.executeTest(testCase);
-        results.push(result);
+      active.add(task);
+      task.finally(() => active.delete(task));
 
-        if (result.isVulnerable) {
-          logger.finding(
-            this.inferSeverity(testCase.category),
-            testCase.name
-          );
-        }
-      } catch (err) {
-        logger.debug(`Test failed: ${testCase.name} - ${(err as Error).message}`);
+      if (active.size >= concurrency) {
+        await Promise.race(active);
       }
     }
 
-    return results;
+    await Promise.allSettled(active);
+    return settled;
   }
 
-  private async executeTest(testCase: SecurityTestCase): Promise<TestResult> {
+  // Sends a benign request (no attack payload, clean path) to each unique endpoint
+  // before running attack tests. Used to establish a baseline for response diffing.
+  private async captureBaselines(
+    testCases: SecurityTestCase[]
+  ): Promise<Map<string, BaselineResponse>> {
+    const baselines = new Map<string, BaselineResponse>();
+    const seen = new Set<string>();
+
+    for (const tc of testCases) {
+      const key = this.endpointKey(tc);
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      try {
+        const cleanPath = new URL(tc.request.path, this.ctx.targetUrl).pathname;
+        const url = new URL(cleanPath, this.ctx.targetUrl);
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "User-Agent": "SecurityBot/1.0",
+          ...buildAuthHeaders(this.ctx.auth),
+        };
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), this.timeout);
+        const start = Date.now();
+        const resp = await fetch(url.toString(), { method: tc.request.method, headers, signal: ctrl.signal });
+        clearTimeout(tid);
+        baselines.set(key, { status: resp.status, body: await resp.text(), timing: Date.now() - start });
+        logger.debug(`Baseline captured for ${key}: ${resp.status}`);
+      } catch {
+        // Baseline capture is best-effort; absence does not block attack tests.
+      }
+    }
+
+    return baselines;
+  }
+
+  private endpointKey(tc: SecurityTestCase): string {
+    try {
+      const parsed = new URL(tc.request.path, this.ctx.targetUrl);
+      return `${tc.request.method.toUpperCase()} ${parsed.pathname}`;
+    } catch {
+      return `${tc.request.method.toUpperCase()} ${tc.request.path}`;
+    }
+  }
+
+  private async executeTest(
+    testCase: SecurityTestCase,
+    baseline?: BaselineResponse
+  ): Promise<TestResult> {
     const startTime = Date.now();
 
     const url = new URL(testCase.request.path, this.ctx.targetUrl);
@@ -81,13 +146,10 @@ export class TestExecutor {
       const response = await fetch(url.toString(), {
         method: testCase.request.method,
         headers,
-        body: testCase.request.body
-          ? JSON.stringify(testCase.request.body)
-          : undefined,
+        body: testCase.request.body ? JSON.stringify(testCase.request.body) : undefined,
         signal: controller.signal,
       });
       this.lastRequestAt = Date.now();
-
       clearTimeout(timeoutId);
 
       const timing = Date.now() - startTime;
@@ -95,23 +157,10 @@ export class TestExecutor {
       const responseHeaders = this.headersToObject(response.headers);
 
       const { isVulnerable, matchedCriteria } = this.evaluateResponse(
-        testCase,
-        response.status,
-        responseHeaders,
-        body
+        testCase, response.status, responseHeaders, body, timing, baseline
       );
 
-      return {
-        testCase,
-        response: {
-          status: response.status,
-          headers: responseHeaders,
-          body,
-          timing,
-        },
-        isVulnerable,
-        matchedCriteria,
-      };
+      return { testCase, response: { status: response.status, headers: responseHeaders, body, timing }, isVulnerable, matchedCriteria };
     } catch (err) {
       clearTimeout(timeoutId);
       throw err;
@@ -120,9 +169,7 @@ export class TestExecutor {
 
   private headersToObject(headers: Headers): Record<string, string> {
     const obj: Record<string, string> = {};
-    headers.forEach((value, key) => {
-      obj[key.toLowerCase()] = value;
-    });
+    headers.forEach((value, key) => { obj[key.toLowerCase()] = value; });
     return obj;
   }
 
@@ -130,34 +177,37 @@ export class TestExecutor {
     testCase: SecurityTestCase,
     status: number,
     headers: Record<string, string>,
-    body: string
+    body: string,
+    timing: number,
+    baseline?: BaselineResponse
   ): { isVulnerable: boolean; matchedCriteria: string[] } {
     const matchedCriteria: string[] = [];
     const expected = testCase.expectedVulnerable;
     const isSuccess = status >= 200 && status < 300;
 
-    // A 404 with "route not found" means the router rejected a path-based payload — not a vulnerability.
+    // A 404 "route not found" means the router rejected a path-based payload — not a vulnerability.
     if (status === 404 && /route.*not.*found|could not be found/i.test(body)) {
       return { isVulnerable: false, matchedCriteria: [] };
     }
 
-    // A 401/403 means auth/authz is working — never flag these as Broken Access Control.
     const isAuthRejection = status === 401 || status === 403;
 
-    // Status code match only counts when the attack succeeded (2xx).
-    // A 401/422 response when 200 was expected means the server correctly rejected the attempt.
+    // Status code match only counts when the attack produced a 2xx that differs from the baseline.
     if (expected.statusCodes?.includes(status) && isSuccess) {
-      matchedCriteria.push(`Status code ${status} matches expected`);
+      if (!baseline || baseline.status >= 400) {
+        matchedCriteria.push(`Status code ${status} matches expected`);
+      }
     }
 
     // Body-contains and header-missing checks only apply on 2xx responses.
-    // Checking these on 401/404/422 generates false positives because error bodies
-    // contain generic terms ("id", "success") and error responses naturally lack
-    // protocol headers (WWW-Authenticate, Authorization) that are not security headers.
     if (isSuccess) {
       if (expected.bodyContains) {
         for (const needle of expected.bodyContains) {
-          if (body.toLowerCase().includes(needle.toLowerCase())) {
+          const inBody = body.toLowerCase().includes(needle.toLowerCase());
+          // Task 2: skip the match if the same string appeared in the benign baseline response.
+          // This eliminates generic words ("id", "success") that appear in every normal response.
+          const inBaseline = baseline?.body.toLowerCase().includes(needle.toLowerCase()) ?? false;
+          if (inBody && !inBaseline) {
             matchedCriteria.push(`Body contains "${needle}"`);
           }
         }
@@ -171,12 +221,7 @@ export class TestExecutor {
         }
       }
 
-      // Auto-check core security headers on successful responses only.
-      const securityHeaders = [
-        "x-content-type-options",
-        "x-frame-options",
-        "strict-transport-security",
-      ];
+      const securityHeaders = ["x-content-type-options", "x-frame-options", "strict-transport-security"];
       for (const header of securityHeaders) {
         if (!headers[header] && !expected.headerMissing?.includes(header)) {
           matchedCriteria.push(`Missing security header: ${header}`);
@@ -184,8 +229,15 @@ export class TestExecutor {
       }
     }
 
-    // Definitive exploitation indicators — check on all responses.
-    // These are unambiguous evidence of a real vulnerability regardless of status.
+    // Task 3: time-based blind injection — response significantly slower than baseline.
+    // Threshold: >3 000 ms AND at least 3× the baseline timing.
+    if (!isAuthRejection && baseline && timing > 3000 && timing > baseline.timing * 3) {
+      matchedCriteria.push(
+        `Response delayed ${timing}ms vs baseline ${baseline.timing}ms — possible blind injection`
+      );
+    }
+
+    // Definitive exploitation indicators — check on all non-auth-rejection responses.
     if (!isAuthRejection) {
       const vulnIndicators = [
         { pattern: /sql.*error|syntax.*error|mysql.*error|postgresql.*error|sqlite.*error/i, name: "SQL error" },
@@ -200,10 +252,7 @@ export class TestExecutor {
       }
     }
 
-    return {
-      isVulnerable: matchedCriteria.length > 0,
-      matchedCriteria,
-    };
+    return { isVulnerable: matchedCriteria.length > 0, matchedCriteria };
   }
 
   private inferSeverity(category: string): string {
@@ -217,8 +266,9 @@ export class TestExecutor {
       "Security Misconfiguration": "MEDIUM",
       "Sensitive Data Exposure": "HIGH",
       CSRF: "MEDIUM",
+      SSRF: "HIGH",
+      "Mass Assignment": "HIGH",
     };
-
     return severityMap[category] || "MEDIUM";
   }
 
@@ -226,26 +276,16 @@ export class TestExecutor {
     const url = new URL(testCase.request.path, this.ctx.targetUrl);
     const safety = this.ctx.config.safety;
 
-    if (!isUrlInScope(url, this.ctx.targetUrl, safety)) {
-      return `URL ${url.hostname} is outside configured scope`;
-    }
-
-    if (isPathExcluded(url.pathname, safety)) {
-      return `path ${url.pathname} is excluded by safety.excludedPaths`;
-    }
-
-    if (!allowsDestructiveMethod(testCase.request.method, safety)) {
-      return `method ${testCase.request.method.toUpperCase()} is blocked by safety profile`;
-    }
+    if (!isUrlInScope(url, this.ctx.targetUrl, safety)) return `URL ${url.hostname} is outside configured scope`;
+    if (isPathExcluded(url.pathname, safety)) return `path ${url.pathname} is excluded by safety.excludedPaths`;
+    if (!allowsDestructiveMethod(testCase.request.method, safety)) return `method ${testCase.request.method.toUpperCase()} is blocked by safety profile`;
 
     return undefined;
   }
 
   private async applyThrottle(): Promise<void> {
     const delay = requestDelayMs(this.ctx.config.safety);
-    if (delay <= 0 || this.lastRequestAt === 0) {
-      return;
-    }
+    if (delay <= 0 || this.lastRequestAt === 0) return;
 
     const elapsed = Date.now() - this.lastRequestAt;
     if (elapsed < delay) {

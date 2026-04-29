@@ -6,6 +6,7 @@ import { createRequire } from "module";
 import { createRunCommand } from "./commands/run.js";
 import { createInitCommand } from "./commands/init.js";
 import { createDoctorCommand } from "./commands/doctor.js";
+import { createWatchCommand } from "./commands/watch.js";
 import { logger } from "../core/logger.js";
 
 // Load environment variables from .env file without adding noise to CI logs.
@@ -34,6 +35,7 @@ async function main(): Promise<void> {
   program.addCommand(createRunCommand());
   program.addCommand(createInitCommand());
   program.addCommand(createDoctorCommand());
+  program.addCommand(createWatchCommand());
 
   // Default action (no command specified)
   program.action(() => {

@@ -25,8 +25,14 @@ Breach Gate answers: **"Can an attacker actually compromise the system?"**
 - **Confirmed Exploit Tracking** - AI/dynamic testing success = auto-critical priority
 - **Endpoint Correlation** - Groups findings by attack surface area
 - **Contextual Remediation** - Specific fixes with code examples, not generic advice
-- **Multi-Scanner Integration** - Trivy (SAST), ZAP (DAST), Container scanning, AI behavioral testing
+- **Multi-Scanner Integration** - Trivy (SAST), ZAP (DAST), Container scanning, AI behavioral testing, GraphQL probing
 - **CI Auth And Safety** - Short-lived auth hooks, multi-role scans, session cookies, AI replay artifacts, and active-scan guardrails
+- **Parallel Execution** - AI tests run concurrently with a configurable concurrency cap for faster scans
+- **Baseline Response Diffing** - Benign baseline captured per endpoint; body matches that appear in normal responses are discarded as noise
+- **Time-Based Blind Injection** - Detects blind SQL and command injection via response timing (>3s and >3× baseline)
+- **Extended AI Attack Categories** - SSRF, Mass Assignment, JWT algorithm confusion/claim tampering, plus standard injection and XSS
+- **Watch Mode** - Continuous scanning on a configurable interval with new/resolved finding diffs
+- **Finding Suppression** - `.breachgateignore` file for suppressing known-acceptable findings by ID, pattern, or endpoint
 
 ## Quick Start
 
@@ -254,6 +260,30 @@ Create starter configuration and optional baseline/CI files.
 breach-gate init --baseline --ci-provider github
 ```
 
+#### `watch`
+
+Continuously scan the target on a fixed interval and report new or resolved findings as a diff.
+
+```bash
+breach-gate watch [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `-c, --config <path>` | Path to config file (default: `security.config.yml`) |
+| `-i, --interval <seconds>` | Seconds between scans (default: `60`, minimum: `10`) |
+| `-v, --verbose` | Verbose output |
+
+```bash
+# Rescan every 2 minutes and highlight new/resolved findings
+breach-gate watch --interval 120
+
+# Use a specific config
+breach-gate watch -c staging.security.config.yml -i 300
+```
+
+Press `Ctrl+C` to stop. Each scan prints `[Scan #N] N NEW finding(s)` or `[Scan #N] No new findings.` and flags resolved findings from the previous run.
+
 #### `doctor`
 
 Check local or CI prerequisites.
@@ -466,6 +496,10 @@ scanners:
     model: claude-haiku-4-5-20251001
     maxTests: 15
 
+  # GraphQL scanner — auto-discovers common paths (/graphql, /api/graphql, /query)
+  graphql:
+    enabled: false             # set to true if the target exposes a GraphQL API
+
 thresholds:
   failOn: HIGH
   warnOn: MEDIUM
@@ -484,21 +518,78 @@ reporting:
   includeEvidence: true
 ```
 
+## Finding Suppression
+
+Two complementary mechanisms exist for suppressing findings:
+
+| Mechanism | Best for |
+|-----------|---------|
+| `.breachgateignore` | Permanently acceptable findings: intentional behaviour, CDN-handled headers, VPN-only endpoints |
+| `.breach-gate-baseline.yml` | Temporary waivers: tracked tickets, no upstream fix yet, sprint backlog items |
+
+### `.breachgateignore`
+
+Create a `.breachgateignore` file in your project root. Findings matching a rule are removed before the verdict and policy evaluation — they won't fail CI and won't appear in reports.
+
+```yaml
+# .breachgateignore
+suppressions:
+  # Suppress by exact finding ID (from the JSON report)
+  - id: "7ba985bc-6885-4c1d-8666-92f317402bd4"
+    reason: "Rate limiting is handled by the upstream load balancer"
+
+  # Suppress by title/category pattern (case-insensitive substring)
+  - pattern: "Missing security header"
+    reason: "Security headers are added at the CDN layer, not the origin"
+
+  # Narrow a pattern to a specific endpoint
+  - pattern: "Path Traversal"
+    endpoint: "/api/internal/files"
+    reason: "Internal endpoint behind VPN, not reachable from the internet"
+
+  # Rules can expire — finding resurfaces after this date
+  - pattern: "Broken Access Control"
+    endpoint: "/api/legacy"
+    reason: "Tracked in SEC-456, scheduled for Q3"
+    expires: "2026-09-01"
+```
+
+Rules are evaluated in order. A finding is suppressed if **any** rule matches. Expired rules are ignored automatically.
+
+See `.breachgateignore.example` in the repository root for a full annotated reference.
+
 ## AI-Assisted Behavioral Testing
 
 The AI scanner is the **key differentiator**. It:
 - Understands endpoint semantics and business logic
-- Generates context-aware attack payloads
+- Generates context-aware attack payloads per endpoint (not a bulk list)
+- Captures a benign baseline response before attacks, then filters matches that appear in normal traffic
 - Confirms exploitation with actual requests
 - Provides high-confidence findings
+
+### Attack Categories
+
+The AI scanner generates test cases across all of these categories, choosing the most relevant ones per endpoint:
+
+| Category | Detection method |
+|----------|-----------------|
+| SQL Injection | Response contains SQL error text or injected payload reflected |
+| Command Injection | Response contains command output; time-based blind via response delay |
+| Path Traversal | File content or internal paths in response |
+| Cross-Site Scripting (XSS) | Script tag reflected verbatim in HTML response |
+| Broken Access Control / IDOR | 2xx response when 4xx expected; different user data returned |
+| SSRF | Response contains cloud metadata (169.254.x.x, amazonaws.com) |
+| Mass Assignment | Privileged field (role, is_admin) echoed back with attacker value |
+| JWT attacks | Algorithm confusion (alg:none), claim tampering — when JWT auth is configured |
+| Information Disclosure | Debug fields, stack traces, internal paths in response |
 
 ### Why AI Findings Matter More
 
 | Source | Confidence | Why |
 |--------|------------|-----|
-| Static (Trivy) | Medium | Theoretical - pattern matching |
+| Static (Trivy) | Medium | Theoretical — pattern matching |
 | Dynamic (ZAP) | High | Active testing, but generic |
-| **AI Tester** | Very High | Context-aware behavioral testing |
+| **AI Tester** | Very High | Context-aware behavioral testing with baseline diffing |
 
 When AI successfully exploits a vulnerability, it's a **confirmed attack path**.
 
@@ -576,6 +667,28 @@ scanners:
 | 8 GB | `llama3:8b-q4_0` |
 | GPU | `codellama:13b` |
 
+## GraphQL Scanning
+
+Enable the GraphQL scanner when the target exposes a GraphQL API:
+
+```yaml
+scanners:
+  graphql:
+    enabled: true
+```
+
+The scanner auto-discovers common GraphQL paths (`/graphql`, `/api/graphql`, `/query`, `/gql`). If none of those respond with a GraphQL-shaped body, it skips silently.
+
+What it probes:
+
+| Check | Finding type |
+|-------|-------------|
+| Introspection enabled | Information Disclosure (MEDIUM) |
+| No query depth limit | Security Misconfiguration (MEDIUM) |
+| Field suggestion in errors | Information Disclosure (LOW) |
+| SQL injection via query variables | SQL Injection (CRITICAL) |
+| IDOR — querying other users' IDs | Broken Access Control (HIGH) |
+
 ## Demo
 
 A vulnerable demo API is included:
@@ -601,17 +714,31 @@ Demo vulnerabilities:
 ```
 breach-gate/
 ├── src/
-│   ├── cli/           # CLI commands and options
+│   ├── cli/
+│   │   └── commands/
+│   │       ├── run.ts      # breach-gate scan
+│   │       ├── watch.ts    # breach-gate watch (continuous scanning)
+│   │       ├── init.ts     # breach-gate init
+│   │       └── doctor.ts   # breach-gate doctor
 │   ├── core/          # Config loader, logger, process runner
 │   ├── orchestrator/  # Scan orchestration, environment management
-│   ├── scanners/      # Scanner implementations (Trivy, ZAP, AI)
+│   ├── scanners/
+│   │   ├── ai/        # AI behavioral tester
+│   │   ├── graphql/   # GraphQL security prober
+│   │   ├── static/    # Trivy SAST
+│   │   ├── container/ # Trivy image scanning
+│   │   └── dynamic/   # OWASP ZAP
 │   ├── findings/      # Attack analysis, risk scoring, remediation
 │   │   ├── attack.analyzer.ts  # Attack feasibility analysis
 │   │   ├── risk.engine.ts      # Risk scoring
 │   │   └── normalizer.ts       # Finding normalization
-│   ├── reports/       # Report generators with verdict
-│   └── ai/            # LLM integration, behavioral testing
+│   ├── policy/
+│   │   ├── policy.ts           # Baseline and policy evaluation
+│   │   └── suppression.ts      # .breachgateignore parser
+│   ├── reports/       # Report generators (JSON, Markdown, SARIF, HTML)
+│   └── ai/            # LLM integration, test generation, evaluation
 ├── demo/              # Vulnerable demo API
+├── .breachgateignore.example
 └── security.config.yml
 ```
 
