@@ -1,0 +1,81 @@
+name: False Positive Report
+description: The scanner flagged something that is not a real vulnerability
+labels: ["false-positive", "scanner-quality"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        False positive reports directly improve scanner accuracy. Thank you for taking the time to file one.
+
+  - type: input
+    id: version
+    attributes:
+      label: Breach Gate version
+      placeholder: "e.g. 1.2.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scanner
+    attributes:
+      label: Which scanner produced the finding?
+      options:
+        - AI Security Tester
+        - GraphQL Security Tester
+        - Trivy Static
+        - Trivy Image
+        - OWASP ZAP
+    validations:
+      required: true
+
+  - type: input
+    id: finding_title
+    attributes:
+      label: Finding title
+      description: Copy from the report.
+    validations:
+      required: true
+
+  - type: input
+    id: endpoint
+    attributes:
+      label: Endpoint
+      placeholder: "e.g. POST /api/accounting/chart-of-accounts"
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence from the report
+      description: Paste the "Matched" and "Response" fields from the finding evidence.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: why_fp
+    attributes:
+      label: Why is this a false positive?
+      description: Explain what the response actually means and why it does not indicate a vulnerability.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: root_cause
+    attributes:
+      label: Root cause (best guess)
+      options:
+        - Generic bodyContains match (word appears in all normal responses)
+        - Protocol header flagged as missing security header (e.g. WWW-Authenticate)
+        - 401/403/422 response incorrectly classified as a bypass
+        - 404 route-not-found treated as vulnerable
+        - Timing false positive (slow network, not blind injection)
+        - AI model misclassified a normal response
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested fix
+      description: Optional — if you have an idea for how to fix the detection logic.

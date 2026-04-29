@@ -1,0 +1,17 @@
+# Default owner for everything
+* @epten08
+
+# AI scanner and prompts — changes here affect false positive rate
+src/ai/ @epten08
+
+# Scanner implementations — new scanners need careful review
+src/scanners/ @epten08
+
+# Policy and suppression — security-critical logic
+src/policy/ @epten08
+
+# Config schema — breaking changes affect all users
+src/core/config.loader.ts @epten08
+
+# CI and release workflows
+.github/workflows/ @epten08

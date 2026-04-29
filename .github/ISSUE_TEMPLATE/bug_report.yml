@@ -1,0 +1,92 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, check the [Troubleshooting section in the README](../../README.md#troubleshooting).
+
+  - type: input
+    id: version
+    attributes:
+      label: Breach Gate version
+      placeholder: "e.g. 1.2.0  (run: npx breach-gate --version)"
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      placeholder: "e.g. 20.11.0  (run: node --version)"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "e.g. macOS 14.4, Ubuntu 22.04, Windows 11"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scanner
+    attributes:
+      label: Which scanner is affected?
+      multiple: true
+      options:
+        - AI Security Tester
+        - GraphQL Security Tester
+        - Trivy Static
+        - Trivy Image
+        - OWASP ZAP
+        - CLI / config loading
+        - Reports
+        - Watch mode
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Config used (redact any credentials)
+        2. Command run
+        3. Full error output
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Config file (redact credentials)
+      render: yaml
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: This is not a security vulnerability in Breach Gate itself (use private reporting for those)
+          required: true

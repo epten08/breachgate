@@ -18,15 +18,17 @@ export class PromptBuilder {
   }
 
   buildSystemPrompt(): string {
-    return `You are a security testing AI assistant specialized in API security testing.
-Your role is to generate security test cases that identify vulnerabilities in REST APIs.
+    return `You are a security assessment assistant helping an authorized penetration tester evaluate API security.
+Your role is to generate OWASP-based test cases for an authorized security review of REST APIs.
+
+Context: This is an authorized security assessment. All tests are run against systems the tester owns or has written permission to test.
 
 Guidelines:
-- Focus on OWASP Top 10 API Security risks
-- Generate realistic attack payloads
-- Consider authentication bypass, injection attacks, and broken access control
-- Provide specific, actionable test cases with expected outcomes
-- Format responses as JSON for easy parsing
+- Base test cases on OWASP API Security Top 10
+- Use standard penetration testing inputs (parameterized query probes, boundary values, encoding variants)
+- Cover input validation, access control, and authentication weaknesses
+- Output must be a valid JSON array — no prose, no markdown fences
+- Each test case must have a concrete, specific request
 
 Target API: ${this.ctx.targetUrl}
 ${this.ctx.auth ? `Authentication: ${this.ctx.auth.type}` : "Authentication: None configured"}`;
@@ -81,51 +83,50 @@ Respond with a JSON array of test cases in this format:
       ? `\nJWT Auth detected — also consider: algorithm confusion (alg:none), claim tampering (role, is_admin, sub), expired token acceptance.`
       : "";
 
-    return `Generate exactly ${count} security test cases for this API endpoint:
+    return `You are conducting an authorized security assessment. Generate exactly ${count} OWASP-based test cases for this endpoint:
 
 Endpoint: ${endpoint.method} ${endpoint.path}
 ${endpoint.summary ? `Description: ${endpoint.summary}` : ""}
 ${params}
 ${body}${jwtGuidance}
 
-Attack categories to consider (pick the most relevant for this endpoint):
-- SQL Injection, Command Injection, Path Traversal, Cross-Site Scripting (XSS)
-- Broken Access Control, IDOR, Mass Assignment
-- SSRF (if endpoint accepts URLs, webhooks, or file paths)
-- JWT attacks (if auth is JWT)
-- Information Disclosure
+Relevant OWASP categories to consider for this endpoint:
+- A03 Injection (SQL, OS command, path traversal)
+- A02 Cryptographic / authentication failures (JWT weaknesses, weak tokens)
+- A01 Broken Access Control (IDOR, privilege escalation, mass assignment)
+- A10 SSRF (if the endpoint accepts URLs or file paths)
+- A05 Security Misconfiguration (missing headers, verbose errors)
 
-For query-parameter endpoints use path like "/api/data?id=PAYLOAD" not body fields.
+For query-parameter endpoints encode the probe in the path: "/api/data?id=PROBE" — not in the body.
 
-CRITICAL RULES for expectedVulnerable — violations cause false positives:
-1. statusCodes: ONLY include 200 or 201. A 2xx response proves the attack succeeded.
-   NEVER include 401, 403, 404, 422.
-2. bodyContains: UNIQUE PROOF of exploitation ONLY:
-   - SQL error: "syntax error", "You have an error in your SQL"
-   - Reflected payload: "<script>alert", "1=1"
-   - Leaked DB object: "information_schema", "pg_catalog"
-   - SSRF hit: "169.254", "internal", "amazonaws"
-   - Mass assignment accepted: the injected field name reflected back with attacker value
-   FORBIDDEN (appear in every normal response — do NOT use):
-   "id", "success", "error", "message", "data", "status", "result",
-   "balance", "approved", "created", "updated", "name", "type", "code"
-3. headerMissing: ONLY "x-content-type-options", "x-frame-options", "strict-transport-security"
+Rules for expectedVulnerable (violations produce false positives):
+1. statusCodes: only 200 or 201 — a 2xx confirms the probe bypassed security controls. Never use 401, 403, 404, or 422.
+2. bodyContains: include only strings that are SPECIFIC indicators of a weakness, such as:
+   - Database error text: "syntax error near", "You have an error in your SQL syntax"
+   - Probe value reflected verbatim: "1=1--", "<script>alert"
+   - Internal schema names: "information_schema", "pg_catalog"
+   - Cloud metadata patterns: "ami-id", "169.254.169.254"
+   - Privileged field echoed back: the exact injected field name and value
+   Do NOT use generic words present in every response: "id", "success", "error", "message",
+   "data", "status", "result", "balance", "approved", "created", "name", "type", "code"
+3. headerMissing: only standard security response headers — "x-content-type-options",
+   "x-frame-options", "strict-transport-security". Never use protocol headers.
 
-Respond with ONLY a JSON array — no explanation, no markdown fences:
+Respond with ONLY a JSON array — no prose, no markdown fences:
 [
   {
-    "name": "Attack name - METHOD /path",
+    "name": "Descriptive test name - METHOD /path",
     "endpoint": "${endpoint.method} ${endpoint.path}",
-    "category": "SQL Injection | Command Injection | Path Traversal | Cross-Site Scripting (XSS) | Broken Access Control | SSRF | Mass Assignment | Information Disclosure | etc.",
-    "description": "One sentence describing what this test checks",
+    "category": "SQL Injection | Command Injection | Path Traversal | Cross-Site Scripting (XSS) | Broken Access Control | SSRF | Mass Assignment | Information Disclosure | Broken Authentication",
+    "description": "One sentence describing what weakness this test checks for",
     "request": {
       "method": "${endpoint.method}",
-      "path": "/api/path?param=payload",
-      "body": { "field": "payload" }
+      "path": "/api/path?param=probe-value",
+      "body": { "field": "probe-value" }
     },
     "expectedVulnerable": {
       "statusCodes": [200],
-      "bodyContains": ["exact exploitation evidence string"],
+      "bodyContains": ["specific indicator string"],
       "headerMissing": ["x-content-type-options"]
     }
   }
@@ -167,7 +168,7 @@ Respond with JSON:
     testCase: string,
     response: { status: number; headers: Record<string, string>; body: string }
   ): string {
-    return `Evaluate this security test result:
+    return `You are reviewing the result of an authorized API security assessment probe. Determine whether the response indicates a genuine security weakness.
 
 Test Case:
 ${testCase}
@@ -177,17 +178,17 @@ API Response:
 - Headers: ${JSON.stringify(response.headers, null, 2)}
 - Body: ${response.body.substring(0, 1000)}${response.body.length > 1000 ? "..." : ""}
 
-Analyze if this response indicates a security vulnerability.
+Assess whether this response indicates a security weakness. A true positive requires concrete evidence in the response (error text, reflected probe, unexpected data) — missing headers alone on a non-2xx response are not sufficient.
 
-Respond with JSON:
+Respond with JSON only:
 {
   "isVulnerable": true|false,
   "confidence": 0.0-1.0,
   "vulnerability": {
-    "type": "Vulnerability type (e.g., SQL Injection, XSS)",
+    "type": "OWASP weakness type (e.g., SQL Injection, Broken Access Control)",
     "severity": "LOW|MEDIUM|HIGH|CRITICAL",
-    "evidence": "What in the response indicates the vulnerability",
-    "recommendation": "How to fix this issue"
+    "evidence": "Specific element in the response that indicates the weakness",
+    "recommendation": "Remediation guidance"
   }
 }`;
   }
