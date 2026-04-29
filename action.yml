@@ -1,5 +1,5 @@
 name: Breach Gate
-description: OWASP-based API security scanner — AI-assisted behavioral testing, static analysis, container scanning, and GraphQL probing in one step.
+description: OWASP API security scanner with AI-assisted testing, static analysis, container scanning, and GraphQL probing.
 author: epten08
 
 branding:
