@@ -1,7 +1,31 @@
 {
   "name": "breach-gate",
-  "version": "1.2.1",
-  "description": "CLI-based automated security analysis tool",
+  "version": "1.2.2",
+  "description": "OWASP API security scanner with AI-assisted behavioral testing, static analysis, container scanning, and GraphQL probing.",
+  "homepage": "https://github.com/epten08/breach-gate#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/epten08/breach-gate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/epten08/breach-gate/issues"
+  },
+  "keywords": [
+    "owasp",
+    "api-security",
+    "security-scanner",
+    "penetration-testing",
+    "devsecops",
+    "sast",
+    "graphql-security",
+    "jwt-security",
+    "ssrf",
+    "sql-injection",
+    "github-actions",
+    "ci-security",
+    "vulnerability-scanner",
+    "owasp-top-10"
+  ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
