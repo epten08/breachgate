@@ -1,4 +1,4 @@
-import { Finding, EndpointContext } from "./finding.js";
+import { Finding } from "./finding.js";
 
 // =============================================================================
 // Attack Feasibility Analysis
@@ -731,7 +731,6 @@ export class AttackAnalyzer {
   private getSpecificRemediation(finding: Finding): { fix: string; code?: string } {
     const category = finding.category.toLowerCase();
     const endpoint = finding.endpoint || "";
-    const ctx = finding.endpointContext;
 
     // SQL Injection with endpoint context
     if (category.includes("sql")) {

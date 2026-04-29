@@ -3,13 +3,12 @@
  * Validates the end-to-end pipeline without requiring external tools
  * (Trivy, ZAP, Ollama) to be installed.
  */
-import { describe, it, expect, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { existsSync, rmSync, mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 
 import { loadConfig, validateConfig } from "../src/core/config.loader.js";
 import { logger } from "../src/core/logger.js";
-import { Finding } from "../src/findings/finding.js";
 import { normalizeFindings, sortByRisk } from "../src/findings/normalizer.js";
 import { RawFinding } from "../src/findings/raw.finding.js";
 import { ReportGenerator } from "../src/reports/report.generator.js";

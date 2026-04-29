@@ -1,5 +1,10 @@
 name: Breach Gate
-description: Run Breach Gate security scans in GitHub Actions.
+description: OWASP-based API security scanner — AI-assisted behavioral testing, static analysis, container scanning, and GraphQL probing in one step.
+author: epten08
+
+branding:
+  icon: shield
+  color: red
 
 inputs:
   config:
@@ -22,6 +27,14 @@ inputs:
     description: Extra arguments passed to `breach-gate scan`.
     required: false
     default: ""
+  anthropic-api-key:
+    description: Anthropic API key for AI-assisted testing. Can also be set via ANTHROPIC_API_KEY env var.
+    required: false
+    default: ""
+  openai-api-key:
+    description: OpenAI API key for AI-assisted testing. Can also be set via OPENAI_API_KEY env var.
+    required: false
+    default: ""
   working-directory:
     description: Repository directory to scan.
     required: false
@@ -34,6 +47,14 @@ inputs:
     description: Command used to install this action's dependencies.
     required: false
     default: npm ci
+
+outputs:
+  verdict:
+    description: Final scan verdict — PASS or FAIL.
+    value: ${{ steps.scan.outputs.verdict }}
+  report-json:
+    description: Path to the JSON report file.
+    value: ${{ steps.scan.outputs.report_json }}
 
 runs:
   using: composite
@@ -56,8 +77,12 @@ runs:
       run: npm run build
 
     - name: Run Breach Gate
+      id: scan
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key || env.ANTHROPIC_API_KEY }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key || env.OPENAI_API_KEY }}
       run: |
         cmd=(node "$GITHUB_ACTION_PATH/dist/cli/index.js" scan --ci)
         cmd+=(--config "${{ inputs.config }}")
@@ -73,5 +98,16 @@ runs:
           cmd+=("${extra_args[@]}")
         fi
 
-        "${cmd[@]}"
+        output=$("${cmd[@]}" 2>&1)
+        exit_code=$?
+        echo "$output"
+
+        verdict=$(echo "$output" | grep -oP '(?<=SECURITY STATUS: )\S+' | tail -1)
+        [ -z "$verdict" ] && verdict=$([ $exit_code -eq 0 ] && echo "PASS" || echo "FAIL")
+        report_json="${{ inputs.output }}/breach-gate-report.json"
+
+        echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+        echo "report_json=$report_json" >> "$GITHUB_OUTPUT"
+
+        exit $exit_code
 

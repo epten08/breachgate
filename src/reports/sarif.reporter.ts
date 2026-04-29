@@ -82,7 +82,7 @@ export class SarifReporter {
           tool: {
             driver: {
               name: "Breach Gate",
-              informationUri: "https://github.com/OWNER/breach-gate",
+              informationUri: "https://github.com/epten08/breach-gate",
               rules,
             },
           },

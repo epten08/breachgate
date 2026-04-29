@@ -2,11 +2,11 @@
 
 Use these examples when Breach Gate is published as either:
 
-- a composite action, for example `OWNER/breach-gate@v1`
+- a composite action, for example `epten08/breach-gate@v1`
 - an npm package, for example `npx breach-gate@1.0.0`
-- a container image, for example `ghcr.io/OWNER/breach-gate:1.0.0`
+- a container image, for example `ghcr.io/epten08/breach-gate:1.0.0`
 
-Replace `OWNER/breach-gate` and image names with the release location used by this project.
+Replace `epten08/breach-gate` and image names with the release location used by this project.
 
 ## Pull Request Quick Scan
 
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Breach Gate
-        uses: OWNER/breach-gate@v1
+        uses: epten08/breach-gate@v1
         with:
           config: security.config.yml
           target: ${{ vars.SECURITY_BOT_API_URL }}
@@ -68,7 +68,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Breach Gate
-        uses: OWNER/breach-gate@v1
+        uses: epten08/breach-gate@v1
         with:
           config: security.config.yml
           target: ${{ vars.STAGING_API_URL }}
@@ -110,7 +110,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Breach Gate
-        uses: OWNER/breach-gate@v1
+        uses: epten08/breach-gate@v1
         with:
           config: security.config.yml
           target: ${{ vars.NIGHTLY_API_URL }}
@@ -138,7 +138,7 @@ The container image is useful when a CI environment should not install Node or T
       -w /workspace \
       -v /var/run/docker.sock:/var/run/docker.sock \
       -e JWT_TOKEN="${{ secrets.SECURITY_BOT_JWT_TOKEN }}" \
-      ghcr.io/OWNER/breach-gate:1.0.0 \
+      ghcr.io/epten08/breach-gate:1.0.0 \
       scan --ci --config security.config.yml --profile main --format json,markdown,sarif --output security-reports
 ```
 

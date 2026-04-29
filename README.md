@@ -768,7 +768,7 @@ docker run --rm \
   -v "$PWD:/workspace" \
   -w /workspace \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  ghcr.io/OWNER/breach-gate:1.0.0 \
+  ghcr.io/epten08/breach-gate:1.0.0 \
   scan --ci --config security.config.yml --profile main --format json,markdown,sarif --output security-reports
 ```
 
@@ -778,7 +778,7 @@ Use this when you want a pinned runtime with the CLI and Trivy already present.
 
 ```yaml
 - name: Run Breach Gate
-  uses: OWNER/breach-gate@v1
+  uses: epten08/breach-gate@v1
   with:
     config: security.config.yml
     target: ${{ vars.STAGING_API_URL }}
@@ -840,7 +840,7 @@ First-party CI/CD examples are available in:
 ```yaml
 # GitHub Actions example
 - name: Run Breach Gate
-  uses: OWNER/breach-gate@v1
+  uses: epten08/breach-gate@v1
   with:
     config: security.config.yml
     target: ${{ vars.STAGING_API_URL }}

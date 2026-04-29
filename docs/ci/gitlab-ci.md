@@ -1,6 +1,6 @@
 # GitLab CI
 
-Use this template when Breach Gate is published as a container image. Replace `ghcr.io/OWNER/breach-gate:1.0.0` with the image location used by this project.
+Use this template when Breach Gate is published as a container image. Replace `ghcr.io/epten08/breach-gate:1.0.0` with the image location used by this project.
 
 ## Security Gate
 
@@ -10,7 +10,7 @@ stages:
 
 security_bot:
   stage: security
-  image: ghcr.io/OWNER/breach-gate:1.0.0
+  image: ghcr.io/epten08/breach-gate:1.0.0
   variables:
     SEC_BOT_OUTPUT: security-reports
   script:
@@ -41,7 +41,7 @@ For Docker-in-Docker:
 ```yaml
 security_bot:
   stage: security
-  image: ghcr.io/OWNER/breach-gate:1.0.0
+  image: ghcr.io/epten08/breach-gate:1.0.0
   services:
     - name: docker:26-dind
       command: ["--tls=false"]

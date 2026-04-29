@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Breach Gate
-        uses: OWNER/breach-gate@v1
+        uses: epten08/breach-gate@v1
         with:
           config: security.config.yml
           target: ${{ vars.SECURITY_BOT_API_URL }}

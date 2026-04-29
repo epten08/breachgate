@@ -103,7 +103,7 @@ export class TestEvaluator {
   }
 
   private evaluateWithRules(result: TestResult): VulnerabilityAssessment {
-    const { testCase, response, matchedCriteria } = result;
+    const { testCase, matchedCriteria } = result;
 
     // Calculate confidence based on matched criteria
     const confidence = Math.min(0.3 + matchedCriteria.length * 0.15, 0.95);

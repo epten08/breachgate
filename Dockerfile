@@ -17,7 +17,7 @@ FROM node:20-bookworm-slim AS runtime
 
 LABEL org.opencontainers.image.title="Breach Gate"
 LABEL org.opencontainers.image.description="CLI-based automated security analysis tool for CI/CD pipelines"
-LABEL org.opencontainers.image.source="https://github.com/OWNER/breach-gate"
+LABEL org.opencontainers.image.source="https://github.com/epten08/breach-gate"
 LABEL org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update \

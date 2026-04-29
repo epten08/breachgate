@@ -161,10 +161,6 @@ export class ZapApiScanner implements Scanner {
       zapImage = "owasp/zap2docker-stable";
     }
 
-    // Start ZAP in daemon mode with API enabled
-    // Use host.docker.internal to allow ZAP to reach the target on localhost
-    const targetUrl = ctx.targetUrl.replace("localhost", "host.docker.internal");
-
     const result = await runProcess(
       "docker",
       [

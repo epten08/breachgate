@@ -61,7 +61,7 @@ steps:
         -w /workspace \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -e JWT_TOKEN="$(SECURITY_BOT_JWT_TOKEN)" \
-        ghcr.io/OWNER/breach-gate:1.0.0 \
+        ghcr.io/epten08/breach-gate:1.0.0 \
         scan --ci --profile main --config security.config.yml --format json,markdown,sarif --output security-reports
     displayName: Run Breach Gate in Docker
 
