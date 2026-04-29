@@ -151,7 +151,7 @@ export class ZapApiScanner implements Scanner {
     return "none";
   }
 
-  private async startZapDocker(ctx: ExecutionContext): Promise<void> {
+  private async startZapDocker(_ctx: ExecutionContext): Promise<void> {
     logger.info("Starting ZAP via Docker");
 
     // Determine which image to use
