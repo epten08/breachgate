@@ -2,13 +2,13 @@
   "name": "breach-gate",
   "version": "1.2.2",
   "description": "OWASP API security scanner with AI-assisted behavioral testing, static analysis, container scanning, and GraphQL probing.",
-  "homepage": "https://github.com/epten08/breach-gate#readme",
+  "homepage": "https://github.com/epten08/breachgate#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/epten08/breach-gate.git"
+    "url": "https://github.com/epten08/breachgate.git"
   },
   "bugs": {
-    "url": "https://github.com/epten08/breach-gate/issues"
+    "url": "https://github.com/epten08/breachgate/issues"
   },
   "keywords": [
     "owasp",
