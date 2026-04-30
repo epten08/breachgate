@@ -1,6 +1,6 @@
 {
   "name": "breach-gate",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "OWASP API security scanner with AI-assisted behavioral testing, static analysis, container scanning, and GraphQL probing.",
   "homepage": "https://github.com/epten08/breachgate#readme",
   "repository": {
