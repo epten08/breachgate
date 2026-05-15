@@ -88,27 +88,53 @@ const IMPACT_SCORES: Record<string, number> = {
   // Critical - Full system compromise
   "Remote Code Execution": 1.0,
   "Command Injection": 1.0,
+  "Code Injection": 0.95,
   "SQL Injection": 0.95,
 
   // High - Significant data/access compromise
+  "Exposed Secret": 0.9,       // Direct credential leak — highly likely to be exploited
+  "Hardcoded Secret": 0.88,
   "Path Traversal": 0.85,
   "Broken Access Control": 0.85,
   "Broken Authentication": 0.85,
   "Sensitive Data Exposure": 0.8,
+  "Insecure Token Storage": 0.8,  // Token in localStorage readable by XSS
   "Cross-Site Scripting (XSS)": 0.75,
   XSS: 0.75,
 
   // Medium - Limited compromise
   CSRF: 0.6,
+  "Insecure Communication": 0.6,  // http:// in production
   "Information Disclosure": 0.5,
   "Security Misconfiguration": 0.45,
-  "Hardcoded Secret": 0.7,
-
-  // Lower - Minimal direct impact
-  "Missing Security Header": 0.25,
-  "TLS/SSL Issue": 0.35,
+  "Cross-Origin Communication": 0.5,  // postMessage wildcard
   "Dependency Vulnerability": 0.5,
   "Container Vulnerability": 0.45,
+
+  // Lower - Code quality / build health
+  "Missing Security Header": 0.25,
+  "TLS/SSL Issue": 0.35,
+  "Type Safety": 0.25,
+  "Code Quality": 0.2,
+  "Build Failure": 0.3,
+};
+
+// Sources that produce static frontend findings — scored differently from live API testing
+const FRONTEND_SOURCES = new Set([
+  "Gitleaks",
+  "Semgrep Frontend",
+  "OSV Scanner",
+  "npm audit",
+  "Project Health",
+]);
+
+// Minimum feasibility floor per severity for frontend static findings.
+// Prevents the multiplicative formula from collapsing CRITICAL issues into "safe".
+const FRONTEND_SEVERITY_FLOOR: Record<string, number> = {
+  CRITICAL: 0.75, // Forces into criticalFindings → UNSAFE for high-impact categories
+  HIGH: 0.65,     // UNSAFE territory
+  MEDIUM: 0.38,   // REVIEW_REQUIRED territory
+  LOW: 0.15,      // SAFE territory
 };
 
 // =============================================================================
@@ -168,12 +194,19 @@ export class AttackAnalyzer {
     const confidence = this.calculateConfidence(finding);
     const isConfirmed = this.isExploitConfirmed(finding);
 
-    // Multiplicative score - all factors must be present for high risk
+    // Multiplicative score — all factors must be present for high risk
     let feasibilityScore = reachability * exploitability * impact * confidence;
 
     // Confirmed exploits get boosted to ensure they're prioritized
     if (isConfirmed) {
       feasibilityScore = Math.max(feasibilityScore, 0.8);
+    }
+
+    // Frontend static findings: apply a severity floor so the multiplicative formula
+    // can't collapse a CRITICAL secret exposure into "safe" territory
+    if (this.isFrontendFinding(finding)) {
+      const floor = FRONTEND_SEVERITY_FLOOR[finding.severity] ?? 0.15;
+      feasibilityScore = Math.max(feasibilityScore, floor);
     }
 
     return {
@@ -189,10 +222,23 @@ export class AttackAnalyzer {
     };
   }
 
+  private isFrontendFinding(finding: Finding): boolean {
+    return finding.sources.some((s) => FRONTEND_SOURCES.has(s));
+  }
+
   /**
    * Calculate reachability - can an attacker access this?
    */
   private calculateReachability(finding: Finding): number {
+    // Frontend code is shipped to browsers — inherently reachable by users and attackers
+    if (this.isFrontendFinding(finding)) {
+      // Secrets in source are reachable once the bundle is served or the repo is accessed
+      if (finding.category === "Exposed Secret" || finding.category === "Hardcoded Secret") {
+        return 0.95;
+      }
+      return 0.85; // Other frontend patterns (XSS, insecure storage, etc.)
+    }
+
     const ctx = finding.endpointContext;
 
     // No endpoint = likely internal/static finding
@@ -203,26 +249,12 @@ export class AttackAnalyzer {
     let score = 0.7; // Base score for any endpoint
 
     if (ctx) {
-      // Public endpoints are more reachable
-      if (!ctx.requiresAuth) {
-        score += 0.2;
-      }
-
-      // Endpoints accepting user input are attack entry points
-      if (ctx.acceptsUserInput) {
-        score += 0.1;
-      }
+      if (!ctx.requiresAuth) score += 0.2;
+      if (ctx.acceptsUserInput) score += 0.1;
     }
 
-    // API endpoints are typically exposed
-    if (finding.endpoint.includes("/api/")) {
-      score += 0.1;
-    }
-
-    // Admin/internal endpoints may be protected
-    if (finding.endpoint.includes("/admin") || finding.endpoint.includes("/internal")) {
-      score -= 0.2;
-    }
+    if (finding.endpoint.includes("/api/")) score += 0.1;
+    if (finding.endpoint.includes("/admin") || finding.endpoint.includes("/internal")) score -= 0.2;
 
     return Math.min(Math.max(score, 0), 1);
   }
@@ -231,14 +263,37 @@ export class AttackAnalyzer {
    * Calculate exploitability - is exploitation demonstrated?
    */
   private calculateExploitability(finding: Finding): number {
+    // Exposed secrets require zero exploitation skill — the credential IS the exploit
+    if (
+      finding.sources.includes("Gitleaks") &&
+      (finding.category === "Exposed Secret" || finding.category === "Hardcoded Secret")
+    ) {
+      return 0.92;
+    }
+
+    // Semgrep frontend patterns are exploitable code paths (not just hypothetical)
+    if (finding.sources.includes("Semgrep Frontend")) {
+      return 0.72;
+    }
+
+    // Dependency CVEs have public exploits in many cases
+    if (
+      (finding.sources.includes("OSV Scanner") || finding.sources.includes("npm audit")) &&
+      finding.cve
+    ) {
+      return 0.75;
+    }
+
+    // Known dependency vulnerability without a CVE
+    if (finding.sources.includes("OSV Scanner") || finding.sources.includes("npm audit")) {
+      return 0.65;
+    }
+
     let score = 0.5; // Base score
 
     // AI-confirmed exploitation is strongest signal
     if (finding.sources.includes("AI Security Tester")) {
-      // AI actually tested and found exploitable
       score = 0.85;
-
-      // Check evidence for successful exploitation markers
       if (finding.evidence) {
         const evidence = finding.evidence.toLowerCase();
         if (
@@ -403,13 +458,46 @@ export class AttackAnalyzer {
       });
     }
 
-    // XSS → Account takeover chain
-    if (categories.some((c) => c.includes("xss") || c.includes("script"))) {
+    // XSS + localStorage tokens → full account takeover
+    if (
+      categories.some((c) => c.includes("xss") || c.includes("script") || c.includes("dangerous"))
+    ) {
+      if (categories.some((c) => c.includes("storage") || c.includes("token"))) {
+        chains.push({
+          name: "XSS → Token Theft → Account Takeover",
+          steps: [
+            "Exploit dangerouslySetInnerHTML or innerHTML to inject script",
+            "Read auth token from localStorage (no httpOnly protection)",
+            "Replay token to impersonate the victim",
+          ],
+          likelihood: "high",
+          impact: "critical",
+        });
+      } else {
+        chains.push({
+          name: "XSS → Session Hijacking",
+          steps: [
+            "Inject malicious script",
+            "Steal session cookies",
+            "Impersonate legitimate users",
+          ],
+          likelihood: "medium",
+          impact: "high",
+        });
+      }
+    }
+
+    // Exposed secret → direct API compromise
+    if (categories.some((c) => c.includes("secret") || c.includes("exposed"))) {
       chains.push({
-        name: "XSS → Session Hijacking",
-        steps: ["Inject malicious script", "Steal session cookies", "Impersonate legitimate users"],
-        likelihood: "medium",
-        impact: "high",
+        name: "Exposed Credential → Direct API Compromise",
+        steps: [
+          "Extract hardcoded API key from source bundle or repository",
+          "Authenticate directly to third-party service (Stripe, Firebase, etc.)",
+          "Access or exfiltrate data without user interaction",
+        ],
+        likelihood: "high",
+        impact: "critical",
       });
     }
 
@@ -442,8 +530,14 @@ export class AttackAnalyzer {
     if (category.includes("command")) {
       return ["Inject command", "Execute on server", "Establish backdoor"];
     }
-    if (category.includes("xss")) {
-      return ["Inject script", "Steal session", "Hijack account"];
+    if (category.includes("xss") || category.includes("cross-site scripting")) {
+      return ["Inject script via dangerouslySetInnerHTML / innerHTML", "Steal localStorage token", "Replay token to take over account"];
+    }
+    if (category.includes("exposed secret") || category.includes("hardcoded secret")) {
+      return ["Extract key from source bundle / repo", "Authenticate to third-party API", "Exfiltrate data or perform actions as the app"];
+    }
+    if (category.includes("insecure token") || category.includes("insecure storage")) {
+      return ["Trigger XSS on the page", "Read localStorage auth token", "Replay token to impersonate victim"];
     }
     if (category.includes("path traversal")) {
       return ["Traverse directories", "Read sensitive files", "Extract secrets"];
@@ -748,6 +842,54 @@ export class AttackAnalyzer {
   private getSpecificRemediation(finding: Finding): { fix: string; code?: string } {
     const category = finding.category.toLowerCase();
     const endpoint = finding.endpoint || "";
+
+    // Exposed / hardcoded secret
+    if (category.includes("exposed secret") || category.includes("hardcoded secret")) {
+      return {
+        fix: `Rotate the exposed credential immediately, then move it to an environment variable. Never commit secrets to source control.`,
+        code: `// Remove from code:\n// const apiKey = 'sk_live_...'   ← delete this\n\n// Use environment variable instead:\nconst apiKey = import.meta.env.VITE_API_KEY  // or process.env.API_KEY\n\n// Add to .gitignore:\necho ".env" >> .gitignore`,
+      };
+    }
+
+    // Insecure token storage
+    if (category.includes("insecure token") || category.includes("insecure storage")) {
+      return {
+        fix: `Move auth tokens from localStorage to an httpOnly cookie set by the server. localStorage is readable by any XSS payload on the page.`,
+        code: `// Server sets token as httpOnly cookie (Express example):\nres.cookie('token', jwt, {\n  httpOnly: true,   // not accessible via JS\n  secure: true,     // HTTPS only\n  sameSite: 'strict'\n});\n\n// Remove from client:\n// localStorage.setItem('token', ...)  ← delete this`,
+      };
+    }
+
+    // dangerouslySetInnerHTML / innerHTML XSS
+    if (category.includes("cross-site scripting") || category.includes("xss")) {
+      return {
+        fix: `Sanitize HTML with DOMPurify before rendering, or avoid dangerouslySetInnerHTML entirely and use text-only React APIs.`,
+        code: `// Instead of (dangerous):\n<div dangerouslySetInnerHTML={{ __html: userContent }} />\n\n// Use DOMPurify:\nimport DOMPurify from 'dompurify';\n<div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(userContent) }} />\n\n// Or avoid HTML altogether:\n<div>{userContent}</div>  // React escapes text automatically`,
+      };
+    }
+
+    // Insecure HTTP
+    if (category.includes("insecure communication")) {
+      return {
+        fix: `Replace http:// with https:// in all API base URLs. Use relative paths where possible so the protocol is inherited from the page.`,
+        code: `// Instead of:\nconst BASE_URL = 'http://api.example.com'\n\n// Use:\nconst BASE_URL = 'https://api.example.com'\n// or relative:\nconst BASE_URL = '/api'  // inherits protocol`,
+      };
+    }
+
+    // postMessage wildcard
+    if (category.includes("cross-origin")) {
+      return {
+        fix: `Specify the exact target origin in postMessage instead of '*'. Validate event.origin in message listeners.`,
+        code: `// Instead of:\nwindow.postMessage(data, '*')\n\n// Use:\nwindow.postMessage(data, 'https://app.example.com')\n\n// In the listener:\nwindow.addEventListener('message', (event) => {\n  if (event.origin !== 'https://trusted.example.com') return;\n  // safe to process event.data\n});`,
+      };
+    }
+
+    // Client-side role check
+    if (category.includes("broken access control")) {
+      return {
+        fix: `Enforce authorization on the server. Client-side role checks are trivially bypassed by modifying localStorage or the JavaScript bundle.`,
+        code: `// Remove client-side gate:\n// if (user.role === 'admin') { ... }  ← move to server\n\n// Server must verify every request:\napp.get('/admin/data', requireRole('admin'), handler)\n\nfunction requireRole(role) {\n  return (req, res, next) => {\n    if (req.user?.role !== role) return res.sendStatus(403);\n    next();\n  };\n}`,
+      };
+    }
 
     // SQL Injection with endpoint context
     if (category.includes("sql")) {

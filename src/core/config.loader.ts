@@ -109,6 +109,15 @@ export interface ScannersConfig {
     replayTests?: string;
     saveTests?: string;
   };
+  frontend?: {
+    enabled: boolean;
+    targetDir?: string;
+    framework?: "react" | "vue" | "angular" | "next" | "auto";
+    skipSemgrep?: boolean;
+    skipSecrets?: boolean;
+    skipDeps?: boolean;
+    skipProjectChecks?: boolean;
+  };
   plugins?: string[];
 }
 
@@ -177,6 +186,7 @@ const DEFAULT_CONFIG: SecurityBotConfig = {
     container: { enabled: true },
     dynamic: { enabled: true },
     ai: { enabled: false },
+    frontend: { enabled: false },
   },
   thresholds: {
     failOn: "HIGH",
@@ -255,6 +265,9 @@ function mergeConfig(
       container: { ...defaults.scanners.container, ...overrides.scanners?.container },
       dynamic: { ...defaults.scanners.dynamic, ...overrides.scanners?.dynamic },
       ai: { ...defaults.scanners.ai, ...overrides.scanners?.ai },
+      frontend: overrides.scanners?.frontend
+        ? { ...defaults.scanners.frontend, ...overrides.scanners.frontend }
+        : defaults.scanners.frontend,
       plugins: overrides.scanners?.plugins ?? defaults.scanners.plugins,
     },
     thresholds: { ...defaults.thresholds, ...overrides.thresholds },
@@ -277,7 +290,15 @@ function mergeConfig(
 export function validateConfig(config: SecurityBotConfig): void {
   const errors: string[] = [];
 
-  if (!config.target.dockerCompose && !config.target.baseUrl) {
+  // Frontend-only scans operate on the local filesystem and don't require a network target
+  const isFrontendOnly =
+    !!config.scanners.frontend?.enabled &&
+    !config.scanners.static.enabled &&
+    !config.scanners.container.enabled &&
+    !config.scanners.dynamic.enabled &&
+    !config.scanners.ai.enabled;
+
+  if (!isFrontendOnly && !config.target.dockerCompose && !config.target.baseUrl) {
     errors.push("Either target.dockerCompose or target.baseUrl must be specified");
   }
 

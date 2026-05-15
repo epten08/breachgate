@@ -55,7 +55,7 @@ async function runWizard(options: InitOptions): Promise<void> {
     // 3. Which scanners
     const scannersRaw = (
       await rl.question(
-        "3. Enable scanners [static,container,dynamic,ai] (default: static,dynamic): "
+        "3. Enable scanners [static,container,dynamic,ai,frontend] (default: static,dynamic): "
       )
     ).trim();
     const scannerList = scannersRaw
@@ -65,6 +65,20 @@ async function runWizard(options: InitOptions): Promise<void> {
     const enableContainer = scannerList.includes("container");
     const enableDynamic = scannerList.includes("dynamic");
     const enableAi = scannerList.includes("ai");
+    const enableFrontend = scannerList.includes("frontend");
+
+    // 3b. Frontend framework (only if frontend enabled)
+    let frontendFramework = "auto";
+    if (enableFrontend) {
+      const frameworkRaw = (
+        await rl.question("3b. Frontend framework [react/vue/angular/next/auto] (default: auto): ")
+      )
+        .trim()
+        .toLowerCase();
+      frontendFramework = ["react", "vue", "angular", "next"].includes(frameworkRaw)
+        ? frameworkRaw
+        : "auto";
+    }
 
     // 4. CI provider
     const ciProviderRaw = (
@@ -94,6 +108,8 @@ async function runWizard(options: InitOptions): Promise<void> {
       enableContainer,
       enableDynamic,
       enableAi,
+      enableFrontend,
+      frontendFramework,
       failOn
     );
 
@@ -139,9 +155,11 @@ function buildWizardConfig(
   enableContainer: boolean,
   enableDynamic: boolean,
   enableAi: boolean,
+  enableFrontend: boolean,
+  frontendFramework: string,
   failOn: string
 ): string {
-  return [
+  const lines = [
     `# yaml-language-server: $schema=./security.config.schema.json`,
     `version: "1.0"`,
     ``,
@@ -163,6 +181,9 @@ function buildWizardConfig(
     ...(enableAi
       ? [`    provider: ollama`, `    model: llama3:8b`, `    baseUrl: http://localhost:11434`]
       : []),
+    `  frontend:`,
+    `    enabled: ${enableFrontend}`,
+    ...(enableFrontend ? [`    framework: ${frontendFramework}`] : []),
     ``,
     `thresholds:`,
     `  failOn: ${failOn}`,
@@ -175,7 +196,8 @@ function buildWizardConfig(
     `    - markdown`,
     `  includeEvidence: true`,
     ``,
-  ].join("\n");
+  ];
+  return lines.join("\n");
 }
 
 function runInit(options: InitOptions): void {
@@ -298,6 +320,15 @@ scanners:
     deterministic: true
     # saveTests: ./security-reports/ai-tests-{role}.json
     # replayTests: ./security-reports/ai-tests-user.json
+
+  frontend:
+    enabled: false
+    # framework: react  # react | vue | angular | next | auto
+    # targetDir: ./     # defaults to current working directory
+    # skipSemgrep: false
+    # skipSecrets: false
+    # skipDeps: false
+    # skipProjectChecks: false
 
 thresholds:
   failOn: HIGH

@@ -47,6 +47,18 @@ inputs:
     description: Command used to install this action's dependencies.
     required: false
     default: npm ci
+  frontend:
+    description: Enable frontend security scanning (Semgrep, Gitleaks, OSV/npm audit, project health checks).
+    required: false
+    default: "false"
+  framework:
+    description: Frontend framework hint for Semgrep rule selection (react, vue, angular, next, auto).
+    required: false
+    default: ""
+  frontend-path:
+    description: Path to the frontend directory to scan (default is the working directory).
+    required: false
+    default: ""
 
 outputs:
   verdict:
@@ -96,6 +108,18 @@ runs:
         if [ -n "${{ inputs.scan-args }}" ]; then
           read -r -a extra_args <<< "${{ inputs.scan-args }}"
           cmd+=("${extra_args[@]}")
+        fi
+
+        if [ "${{ inputs.frontend }}" = "true" ]; then
+          cmd+=(--frontend)
+        fi
+
+        if [ -n "${{ inputs.framework }}" ]; then
+          cmd+=(--framework "${{ inputs.framework }}")
+        fi
+
+        if [ -n "${{ inputs.frontend-path }}" ]; then
+          cmd+=(--frontend-path "${{ inputs.frontend-path }}")
         fi
 
         output=$("${cmd[@]}" 2>&1)

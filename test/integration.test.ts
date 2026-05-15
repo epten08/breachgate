@@ -676,3 +676,95 @@ describe("Severity Weights", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Frontend Scanner Scoring
+// ---------------------------------------------------------------------------
+
+describe("Frontend Scanner Scoring", () => {
+  const gitleaksCritical: RawFinding = {
+    source: "Gitleaks",
+    category: "Exposed Secret",
+    description: "Generic API Key detected in src/services/auth.ts",
+    endpoint: "src/services/auth.ts:3",
+    severityHint: "CRITICAL",
+    evidence: "sk_l****t",
+    reference: "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html",
+  };
+
+  const semgrepHigh: RawFinding = {
+    source: "Semgrep Frontend",
+    category: "Insecure Token Storage",
+    description: "Auth token stored in localStorage — vulnerable to XSS token theft",
+    endpoint: "src/services/auth.ts:10",
+    severityHint: "HIGH",
+  };
+
+  const semgrepMedium: RawFinding = {
+    source: "Semgrep Frontend",
+    category: "Insecure Communication",
+    description: "HTTP used instead of HTTPS for fetch request",
+    endpoint: "src/services/api.ts:5",
+    severityHint: "MEDIUM",
+  };
+
+  it("Gitleaks CRITICAL secret has risk score above 0.7", () => {
+    const findings = normalizeFindings([gitleaksCritical]);
+    expect(findings.length).toBe(1);
+    expect(findings[0].riskScore).toBeGreaterThan(0.7);
+  });
+
+  it("Gitleaks CRITICAL secret does not produce SAFE verdict", () => {
+    const findings = normalizeFindings([gitleaksCritical]);
+    const analyzer = new AttackAnalyzer();
+    const verdict = analyzer.generateVerdictWithStatus(findings, {
+      isComplete: true,
+      failedScanners: [],
+    });
+    expect(verdict.verdict).not.toBe("SAFE");
+  });
+
+  it("Semgrep HIGH finding has risk score above 0.6", () => {
+    const findings = normalizeFindings([semgrepHigh]);
+    expect(findings[0].riskScore).toBeGreaterThan(0.6);
+  });
+
+  it("frontend findings maintain severity ordering: CRITICAL > HIGH > MEDIUM", () => {
+    const findings = normalizeFindings([gitleaksCritical, semgrepHigh, semgrepMedium]);
+    const sorted = findings.sort((a, b) => b.riskScore - a.riskScore);
+    expect(sorted[0].riskScore).toBeGreaterThan(sorted[1].riskScore);
+    expect(sorted[1].riskScore).toBeGreaterThan(sorted[2].riskScore);
+  });
+
+  it("config loader includes frontend scanner in DEFAULT_CONFIG", () => {
+    const config = loadConfig();
+    expect(config.scanners.frontend).toBeDefined();
+    expect(config.scanners.frontend?.enabled).toBe(false);
+  });
+
+  it("frontend-only config validates without a target URL", () => {
+    const testDir = "./test-output-frontend-config";
+    const configPath = join(testDir, "frontend.config.yml");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(
+      configPath,
+      [
+        `version: "1.0"`,
+        `scanners:`,
+        `  static:`,
+        `    enabled: false`,
+        `  container:`,
+        `    enabled: false`,
+        `  dynamic:`,
+        `    enabled: false`,
+        `  ai:`,
+        `    enabled: false`,
+        `  frontend:`,
+        `    enabled: true`,
+      ].join("\n")
+    );
+    const config = loadConfig(configPath);
+    expect(() => validateConfig(config)).not.toThrow();
+    rmSync(testDir, { recursive: true });
+  });
+});

@@ -3,7 +3,7 @@
   "title": "Breach Gate Security Configuration",
   "description": "Configuration schema for security.config.yml",
   "type": "object",
-  "required": ["version", "target"],
+  "required": ["version"],
   "additionalProperties": false,
   "properties": {
     "version": {
@@ -213,6 +213,64 @@
             "saveTests": {
               "type": "string",
               "description": "Path to save generated tests for future replay"
+            }
+          }
+        },
+        "frontend": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Run frontend security scans (Semgrep static analysis, Gitleaks secrets detection, OSV/npm dependency audit, project health checks)",
+              "default": false
+            },
+            "targetDir": {
+              "type": "string",
+              "description": "Directory to scan (defaults to the working directory)"
+            },
+            "framework": {
+              "type": "string",
+              "enum": ["react", "vue", "angular", "next", "auto"],
+              "description": "Frontend framework hint for rule selection (default: auto)",
+              "default": "auto"
+            },
+            "skipSemgrep": {
+              "type": "boolean",
+              "description": "Skip Semgrep static analysis rules",
+              "default": false
+            },
+            "skipSecrets": {
+              "type": "boolean",
+              "description": "Skip Gitleaks secrets detection",
+              "default": false
+            },
+            "skipDeps": {
+              "type": "boolean",
+              "description": "Skip OSV Scanner / npm audit dependency vulnerability scan",
+              "default": false
+            },
+            "skipProjectChecks": {
+              "type": "boolean",
+              "description": "Skip lint, typecheck, and build health checks",
+              "default": false
+            }
+          }
+        },
+        "graphql": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Run GraphQL security probing (introspection, batching, depth limits)",
+              "default": false
+            },
+            "endpoint": {
+              "type": "string",
+              "description": "GraphQL endpoint path (default: /graphql)"
             }
           }
         },

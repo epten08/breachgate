@@ -19,6 +19,10 @@ export interface ScanOptions {
   skipContainer?: boolean;
   skipDynamic?: boolean;
   skipAi?: boolean;
+  skipFrontend?: boolean;
+  frontend?: boolean;
+  framework?: string;
+  frontendPath?: string;
   explainVerdict?: boolean;
 }
 

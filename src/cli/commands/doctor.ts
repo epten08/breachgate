@@ -123,6 +123,50 @@ async function checkScannerPrerequisites(
     );
   }
 
+  if (config.scanners.frontend?.enabled) {
+    const [hasSemgrep, hasGitleaks, hasOsv, hasNpm] = await Promise.all([
+      checkCommand("semgrep"),
+      checkCommand("gitleaks"),
+      checkCommand("osv-scanner"),
+      checkCommand("npm"),
+    ]);
+
+    results.push(
+      toolResult(
+        "semgrep",
+        hasSemgrep,
+        false,
+        hasSemgrep
+          ? "Semgrep available for static analysis"
+          : "Semgrep not found — install: pip install semgrep  |  https://semgrep.dev/docs/getting-started"
+      )
+    );
+
+    results.push(
+      toolResult(
+        "gitleaks",
+        hasGitleaks,
+        false,
+        hasGitleaks
+          ? "Gitleaks available for secrets detection"
+          : "Gitleaks not found — install: brew install gitleaks  |  https://github.com/gitleaks/gitleaks#installing"
+      )
+    );
+
+    results.push(
+      toolResult(
+        "osv-scanner or npm",
+        hasOsv || hasNpm,
+        ciMode,
+        hasOsv
+          ? "osv-scanner available for dependency scanning"
+          : hasNpm
+            ? "npm audit available (install osv-scanner for richer results: https://google.github.io/osv-scanner)"
+            : "Neither osv-scanner nor npm found — dependency scanning unavailable"
+      )
+    );
+  }
+
   return results;
 }
 

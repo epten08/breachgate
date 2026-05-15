@@ -94,3 +94,48 @@ jobs:
           name: demo-security-reports
           path: security-reports/demo/
 
+  frontend-scan-smoke:
+    name: Frontend scanner smoke test
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Install demo-frontend dependencies
+        run: npm install
+        working-directory: demo-frontend
+
+      - name: Run frontend scan against demo-frontend
+        run: |
+          node dist/cli/index.js scan \
+            --ci \
+            --frontend \
+            --workdir demo-frontend \
+            --format json,markdown \
+            --output security-reports/frontend-smoke
+        # Exit 0 or 1 are both acceptable (findings may exist); only exit 2+ means a crash
+        continue-on-error: true
+
+      - name: Verify scan produced a report
+        run: |
+          if [ ! -f security-reports/frontend-smoke/security-report.json ]; then
+            echo "ERROR: No JSON report generated" >&2
+            exit 1
+          fi
+          echo "Frontend smoke scan completed — report present"
+
+      - name: Upload frontend scan reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-security-reports
+          path: security-reports/frontend-smoke/
+
