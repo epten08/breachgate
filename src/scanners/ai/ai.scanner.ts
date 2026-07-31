@@ -8,7 +8,7 @@ import { AIConfig } from "../../ai/adversary.js";
 import { logger } from "../../core/logger.js";
 import { ScannerError, ScannerUnavailableError } from "../../core/errors.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { dirname } from "path";
+import { dirname, resolve } from "path";
 
 export interface AIScannnerConfig {
   provider: "ollama" | "openai" | "anthropic";
@@ -141,7 +141,15 @@ export class AIScanner implements Scanner {
   private loadReplayTests(ctx: ExecutionContext): SecurityTestCase[] {
     const path = this.resolveReplayPath(ctx, this.config.replayTests!);
     if (!existsSync(path)) {
-      throw new ScannerUnavailableError(`AI replay artifact not found: ${path}`, this.name);
+      // Report the absolute path and the directory it was resolved against.
+      // A bare "./ai-tests.json" tells you nothing about where we looked, which
+      // turned a one-line .gitignore mistake into a CI investigation.
+      throw new ScannerUnavailableError(
+        `AI replay artifact not found: ${path} (resolved to ${resolve(path)} from working directory ${process.cwd()})`,
+        this.name,
+        undefined,
+        "Check that the file exists and is committed. Note that .gitignore has an 'ai-tests*.json' rule, so a replay fixture must be explicitly un-ignored to reach CI."
+      );
     }
 
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as
