@@ -38,9 +38,7 @@ body:
       multiple: true
       options:
         - AI Security Tester
-        - GraphQL Security Tester
         - Trivy Static
-        - Trivy Image
         - OWASP ZAP
         - CLI / config loading
         - Reports

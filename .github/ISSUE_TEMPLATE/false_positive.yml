@@ -11,7 +11,22 @@ body:
     id: version
     attributes:
       label: Breach Gate version
-      placeholder: "e.g. 1.2.0"
+      placeholder: "e.g. 2.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: verdict_impact
+    attributes:
+      label: Did this finding block a deployment?
+      description: >-
+        A finding reported as CONFIRMED returns UNSAFE and blocks the deploy. That is the most
+        serious class of false positive and gets priority. A REVIEW_REQUIRED or SAFE finding is
+        noise, which matters less but is still worth fixing.
+      options:
+        - "Yes: reported as a confirmed exploit, verdict was UNSAFE"
+        - "No: verdict was REVIEW_REQUIRED"
+        - "No: verdict was SAFE, the finding was just noise in the report"
     validations:
       required: true
 
@@ -21,9 +36,7 @@ body:
       label: Which scanner produced the finding?
       options:
         - AI Security Tester
-        - GraphQL Security Tester
         - Trivy Static
-        - Trivy Image
         - OWASP ZAP
     validations:
       required: true
@@ -46,7 +59,9 @@ body:
     id: evidence
     attributes:
       label: Evidence from the report
-      description: Paste the "Matched" and "Response" fields from the finding evidence.
+      description: >-
+        Paste the whole evidence block. For a confirmed finding this includes the "Proof" and
+        "Proof excerpt" lines, which are the specific claim we need to disprove.
       render: text
     validations:
       required: true
@@ -64,12 +79,13 @@ body:
     attributes:
       label: Root cause (best guess)
       options:
-        - Generic bodyContains match (word appears in all normal responses)
-        - Protocol header flagged as missing security header (e.g. WWW-Authenticate)
-        - 401/403/422 response incorrectly classified as a bypass
+        - A proof pattern matched text that a healthy response legitimately contains
+        - The proof signal was also present in the benign baseline and should have been filtered
+        - 401/403 response incorrectly classified as an auth bypass
         - 404 route-not-found treated as vulnerable
         - Timing false positive (slow network, not blind injection)
-        - AI model misclassified a normal response
+        - Reported category does not match what the proof actually shows
+        - Finding is real but the feasibility score is too high
         - Other
     validations:
       required: true
@@ -78,4 +94,7 @@ body:
     id: suggestion
     attributes:
       label: Suggested fix
-      description: Optional — if you have an idea for how to fix the detection logic.
+      description: >-
+        Optional. The most useful thing you can give us is a minimal endpoint that reproduces it,
+        because it goes straight into the precision corpus in test/corpus/targets.ts as a clean
+        case and the detector gets fixed against it.

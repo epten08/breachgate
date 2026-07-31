@@ -103,7 +103,8 @@ src/
 │       ├── init.ts       # breach-gate init
 │       └── doctor.ts     # breach-gate doctor
 ├── core/                # Config loader, logger, errors
-├── findings/            # Attack feasibility analysis, risk scoring, normaliser
+├── findings/            # Attack feasibility analysis, proofs, scoring, normaliser
+├── intel/               # EPSS and CISA KEV exploit intelligence
 ├── orchestrator/        # Scanner orchestration, environment management
 ├── policy/
 │   ├── policy.ts        # Baseline evaluation
@@ -111,19 +112,23 @@ src/
 ├── reports/             # JSON, Markdown, SARIF, HTML report generators
 ├── safety/              # Allowlist enforcement, rate limiting
 └── scanners/
-    ├── ai/              # AI behavioral tester
-    ├── graphql/         # GraphQL security prober
-    ├── static/          # Trivy SAST
-    ├── container/       # Trivy image scanning
+    ├── ai/              # AI behavioural tester (the only source of proofs)
+    ├── static/          # Trivy dependency and IaC analysis
     └── dynamic/         # OWASP ZAP
 ```
+
+Breach Gate scans running REST APIs and nothing else. Frontend, GraphQL, and
+container scanning were removed in v2.0.0. Please do not reintroduce breadth:
+the value of a deploy gate is entirely in whether its verdict can be trusted.
 
 ---
 
 ## Running Tests
 
 ```bash
-npm test              # Integration tests (src/test/integration.test.ts)
+npm run test:controls # Negative controls — clean targets must stay SAFE
+npm run precision     # Precision and recall against the corpus
+npm test              # Integration tests
 npm run test:cli      # CLI tests
 npm run test:watch    # Watch mode
 npm run test:coverage # Coverage report
@@ -135,6 +140,38 @@ npm run format:check  # Prettier
 All PRs must pass the full CI suite: `npm run test:all`.
 
 The integration tests run against mock servers — no live API key or external target is required.
+
+### The negative control rule
+
+**Every detector needs a test proving it stays quiet on a clean target, and that
+test must be written before the detector is merged.** If you cannot write it,
+you do not understand your detector well enough to ship it.
+
+This rule exists because of a specific failure. Until v2.0.0 the entire
+behavioural test suite ran against `demo/vulnerable-api.ts`, where every
+endpoint is deliberately broken. `UNSAFE` was therefore always the expected
+answer, and `UNSAFE` is also this tool's failure mode. The suite could not tell
+a working scanner from a broken one, and a scanner that reported a missing
+`X-Frame-Options` header as a confirmed SQL injection passed CI and shipped to
+npm.
+
+Two suites enforce the rule now, and CI runs both **before** lint, unit tests,
+and build:
+
+| Suite | What it guarantees |
+|---|---|
+| `test/negative-controls.test.ts` | Clean targets stay `SAFE`. Every past false-positive defect is pinned here as a regression test. |
+| `test/precision.test.ts` | Measured precision and recall against `test/corpus/targets.ts`. Precision is gated at exactly 1.0, so one false positive fails the build. |
+
+Recall is gated lower (0.9) than precision (1.0) on purpose. A missed finding is
+a bug. A false positive that blocks a good deploy gets the tool deleted from the
+pipeline and never reinstated.
+
+When you add a corpus case, make the clean half adversarial. Good clean cases
+return the word "error" in a healthy body, reflect input safely escaped, return
+500 without a stack trace, and set no security headers at all. Building the
+corpus this way immediately exposed two detector bugs that code review had
+missed.
 
 ---
 
@@ -164,7 +201,7 @@ Scanners implement the `Scanner` interface (`src/scanners/scanner.ts`):
 ```typescript
 export interface Scanner {
   name: string;
-  category: ScannerCategory;   // "static" | "container" | "dynamic" | "ai"
+  category: ScannerCategory;   // "static" | "dynamic" | "ai"
   run(ctx: ExecutionContext): Promise<RawFinding[]>;
 }
 ```
@@ -176,8 +213,14 @@ Steps:
 3. Add a corresponding config key to `ScannersConfig` in `src/core/config.loader.ts`.
 4. Wire it into `createScanners()` in `src/cli/commands/run.ts`.
 5. Add integration tests covering available and unavailable states.
+6. Add a negative control. See the rule below; this is not optional.
 
-See `src/scanners/graphql/graphql.scanner.ts` for a self-contained example that does endpoint discovery, multiple probes, and graceful fallback.
+See `src/scanners/static/trivy.static.ts` for a self-contained example with graceful fallback when the tool is missing.
+
+**A scanner that cannot reach its target must throw, not return `[]`.** An empty
+result set is recorded as a successful scan, so swallowing errors turns an
+unreachable target into a `SAFE` verdict. `src/scanners/ai/ai.scanner.ts` shows
+the pattern: count the failures and raise `ScannerError` past a threshold.
 
 ---
 
@@ -193,17 +236,38 @@ List the new category in `buildEndpointTestPrompt()` under "Attack categories to
 
 In `getFallbackTestsForEndpoint()`, add a branch with a concrete payload for when the AI call fails or is unavailable. This ensures the category is always tested even offline.
 
-### 3. Add a classifier (`src/ai/evaluator.ts`)
+### 3. Decide what would PROVE it (`src/ai/executor.ts`)
 
-In `classifyVulnerability()`, add a case that matches on the new category string and returns the correct `type`, `severity`, and `recommendation`.
+This is the important step. A category is only useful if a response can prove it.
+Add an `ExploitProof` value in `src/findings/finding.ts` and a detector in
+`evaluateResponse()` that returns the matched excerpt.
 
-### 4. Update `inferSeverity` (`src/ai/executor.ts`)
+Three rules your detector must follow:
 
-Add the new category to the `severityMap` in `inferSeverity()` so the live console output shows the right severity badge.
+- **Quote the evidence.** A proof without an excerpt is not a proof, because a
+  developer cannot verify it in ten seconds.
+- **Diff against the baseline.** If the signal also appears in the benign
+  request, your payload did not cause it.
+- **Be narrow.** An early version of the command-output pattern matched
+  `/bin/bash`, which appears in every `/etc/passwd`, so reading a file was
+  reported as command execution. Prefer a pattern that misses over one that
+  guesses.
 
-### 5. Add to the README attack categories table
+### 4. Map the proof to a category (`src/ai/evaluator.ts`)
 
-Update the table in `README.md` under *AI-Assisted Behavioral Testing → Attack Categories*.
+Add an entry to `PROOF_CLASSIFICATION` and rank it in `PROOF_PRIORITY`.
+Classification is driven by what was observed, never by `testCase.category`.
+Dispatching on the test's own label is what once caused a missing response
+header to be reported as a confirmed SQL injection.
+
+### 5. Add corpus cases (`test/corpus/targets.ts`)
+
+Add **both** a vulnerable endpoint and a clean one that a naive detector would
+flag. The clean case is the one that matters.
+
+### 6. Add to the README proof table
+
+Update the table under *What counts as proof*.
 
 ---
 
@@ -222,8 +286,8 @@ Update the table in `README.md` under *AI-Assisted Behavioral Testing → Attack
 **Examples:**
 
 ```
-feat(scanner): add GraphQL introspection and depth-limit probes
-fix(ai): skip bodyContains check on 4xx responses to eliminate false positives
+feat(ai): add SSRF cloud-metadata proof with baseline diffing
+fix(ai): narrow command-output pattern so /etc/passwd is not read as RCE
 docs: document .breachgateignore suppression file format
 test(policy): add suppression expiry edge case
 ```
