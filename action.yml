@@ -1,5 +1,5 @@
 name: Breach Gate
-description: OWASP API security scanner with AI-assisted testing, static analysis, container scanning, and GraphQL probing.
+description: API deploy gate. Blocks only on proven exploitation, with EPSS and CISA KEV prioritisation.
 author: epten08
 
 branding:
@@ -47,6 +47,10 @@ inputs:
     description: Command used to install this action's dependencies.
     required: false
     default: npm ci
+  offline:
+    description: Use cached EPSS/KEV intel only. No network lookups during the scan.
+    required: false
+    default: "false"
 
 outputs:
   verdict:
@@ -96,6 +100,10 @@ runs:
         if [ -n "${{ inputs.scan-args }}" ]; then
           read -r -a extra_args <<< "${{ inputs.scan-args }}"
           cmd+=("${extra_args[@]}")
+        fi
+
+        if [ "${{ inputs.offline }}" = "true" ]; then
+          cmd+=(--offline)
         fi
 
         output=$("${cmd[@]}" 2>&1)

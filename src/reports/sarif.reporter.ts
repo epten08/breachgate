@@ -1,6 +1,7 @@
 import { Finding, Severity } from "../findings/finding.js";
 import { SecurityVerdict } from "../findings/attack.analyzer.js";
 import { PolicyEvaluation, fingerprintFinding } from "../policy/policy.js";
+import { feasibilityOf } from "../findings/score.js";
 
 export interface SarifReporterOptions {
   targetUrl: string;
@@ -121,9 +122,12 @@ export class SarifReporter {
             properties: {
               category: finding.category,
               severity: finding.severity,
-              riskScore: finding.riskScore,
+              feasibilityScore: feasibilityOf(finding),
               confidence: finding.confidence,
-              exploitability: finding.exploitability,
+              confirmed: finding.proofs.length > 0,
+              proofs: finding.proofs,
+              epssScore: finding.epssScore,
+              knownExploited: finding.knownExploited ?? false,
               endpoint: finding.endpoint,
               role: finding.role,
               cve: finding.cve,

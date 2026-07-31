@@ -3,6 +3,7 @@ import { Finding, Severity } from "../findings/finding.js";
 import { sortByRisk } from "../findings/normalizer.js";
 import { RiskEngine } from "../findings/risk.engine.js";
 import { AttackAnalyzer, SecurityVerdict } from "../findings/attack.analyzer.js";
+import { feasibilityOf, feasibilityLabel, explainExploitability } from "../findings/score.js";
 
 export interface CliSummaryOptions {
   maxFindings?: number;
@@ -142,9 +143,17 @@ export class CliSummary {
         console.log(chalk.gray(`     Category: ${finding.category}`));
         console.log(
           chalk.gray(
-            `     Risk: ${finding.riskScore.toFixed(2)} | Confidence: ${finding.confidence.toFixed(2)} | Sources: ${finding.sources.join(", ")}`
+            `     Feasibility: ${feasibilityOf(finding).toFixed(2)} (${feasibilityLabel(finding)}) | Confidence: ${finding.confidence.toFixed(2)} | Sources: ${finding.sources.join(", ")}`
           )
         );
+
+        // Where the exploitability number came from: KEV, a proof observed in
+        // this scan, EPSS, or a category baseline guess.
+        console.log(chalk.gray(`     Basis: ${explainExploitability(finding)}`));
+
+        if (finding.proofs.length > 0 && finding.proofExcerpt) {
+          console.log(chalk.gray(`     Proof: ${this.truncate(finding.proofExcerpt, 100)}`));
+        }
 
         if (finding.cve) {
           console.log(chalk.gray(`     CVE: ${finding.cve}`));

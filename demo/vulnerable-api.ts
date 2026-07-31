@@ -91,8 +91,9 @@ const routes: Record<string, (req: http.IncomingMessage, res: http.ServerRespons
       return;
     }
 
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ results: [], query }));
+    // Vulnerability: reflects the query into HTML with no encoding
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(`<html><body><p>Results for: ${query}</p></body></html>`);
   },
 
   // Execute endpoint (vulnerability: command injection simulation)
@@ -111,8 +112,16 @@ const routes: Record<string, (req: http.IncomingMessage, res: http.ServerRespons
     // Vulnerability: accepts arbitrary command (simulated)
     const command = data.command || "";
 
-    // Don't actually execute, just log (for demo purposes)
+    // Nothing is ever executed. When the input contains shell metacharacters we
+    // return a canned transcript so the endpoint is detectably exploitable
+    // without this process running anything.
     console.log(`[VULN] Would execute command: ${command}`);
+
+    if (/[;&|`$]/.test(command)) {
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("uid=0(root) gid=0(root) groups=0(root)\nroot\n");
+      return;
+    }
 
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({
@@ -146,6 +155,10 @@ const routes: Record<string, (req: http.IncomingMessage, res: http.ServerRespons
     // Vulnerability: no path sanitization
     if (path.includes("..")) {
       console.log(`[VULN] Path traversal attempt detected: ${path}`);
+      // Canned content. No file is opened.
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end("root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/usr/sbin:/bin/sh\n");
+      return;
     }
 
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -166,6 +179,15 @@ const routes: Record<string, (req: http.IncomingMessage, res: http.ServerRespons
 
     if (id.includes("'") || id.includes("--") || id.toLowerCase().includes("union")) {
       console.log(`[VULN] SQL injection attempt detected: ${id}`);
+      // The unescaped value reaches the engine and the driver error is returned
+      // verbatim to the caller. This is a canned string: no database is used.
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        error: "Database error",
+        details: `You have an error in your SQL syntax near "${id}" at line 1`,
+        query: simulatedQuery,
+      }));
+      return;
     }
 
     res.writeHead(200, { "Content-Type": "application/json" });

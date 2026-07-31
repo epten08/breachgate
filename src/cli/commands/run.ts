@@ -13,11 +13,10 @@ import { Orchestrator, ScanResult, ScannerStatus } from "../../orchestrator/orch
 import { EnvironmentManager } from "../../orchestrator/environment.manager.js";
 import { AuthContext, EnvironmentContext, ExecutionContext } from "../../orchestrator/context.js";
 import { TrivyStaticScanner } from "../../scanners/static/trivy.static.js";
-import { TrivyImageScanner } from "../../scanners/container/trivy.image.js";
 import { ZapApiScanner } from "../../scanners/dynamic/zap.api.js";
 import { AIScanner } from "../../scanners/ai/ai.scanner.js";
-import { GraphQLScanner } from "../../scanners/graphql/graphql.scanner.js";
 import { Scanner, ScannerCategory } from "../../scanners/scanner.js";
+import { ExploitIntel } from "../../intel/exploit.intel.js";
 import { ReportGenerator } from "../../reports/report.generator.js";
 import {
   applyBaseline,
@@ -65,9 +64,9 @@ export function createRunCommand(): Command {
     .option("--baseline <path>", "Path to baseline/ignore file")
     .option("--differential", "Fail only on findings not covered by the baseline")
     .option("--skip-static", "Skip static analysis")
-    .option("--skip-container", "Skip container scanning")
     .option("--skip-dynamic", "Skip dynamic API scanning")
     .option("--skip-ai", "Skip AI-assisted testing")
+    .option("--offline", "Skip EPSS/KEV network lookups and use the local cache only")
     .option("--explain-verdict", "Show how each finding's feasibility score was calculated")
     .action(async (options: ScanOptions) => {
       await runScan(options);
@@ -231,14 +230,14 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
     if (options.skipStatic) {
       config.scanners.static.enabled = false;
     }
-    if (options.skipContainer) {
-      config.scanners.container.enabled = false;
-    }
     if (options.skipDynamic) {
       config.scanners.dynamic.enabled = false;
     }
     if (options.skipAi) {
       config.scanners.ai.enabled = false;
+    }
+    if (options.offline) {
+      config.intel = { ...config.intel, enabled: false };
     }
 
     applySafetyRunDefaults(config, isCiMode);
@@ -279,7 +278,6 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
     // Log enabled scanners
     const enabledScanners: string[] = [];
     if (config.scanners.static.enabled) enabledScanners.push("static");
-    if (config.scanners.container.enabled) enabledScanners.push("container");
     if (config.scanners.dynamic.enabled) enabledScanners.push("dynamic");
     if (config.scanners.ai.enabled) enabledScanners.push("ai");
 
@@ -299,7 +297,7 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
     allScannersFailed: false,
   };
   const scanStartTime = Date.now();
-  let targetUrlForReports = config.target.baseUrl || config.target.dockerCompose || "unknown";
+  let targetUrlForReports = config.target.baseUrl || config.target.dockerCompose || "local";
 
   try {
     if (!isCiMode) {
@@ -316,7 +314,6 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
     const scanners = await createScanners(config);
     const enabledCategories = getEnabledCategories(config);
 
-    // Run orchestrator with status tracking
     if (!isCiMode) {
       logger.banner("Running Scans");
     }
@@ -329,6 +326,12 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
       authContexts,
       isCiMode,
     });
+
+    // Enrich CVE-bearing findings with EPSS probability and CISA KEV status
+    // before any scoring happens. Fails open: unreachable intel leaves findings
+    // unchanged rather than blocking the scan.
+    const intel = new ExploitIntel(config.intel, config.configFilePath);
+    await intel.enrich(scanResult.findings);
 
     // Display CLI summary (skip in CI mode)
     if (!isCiMode) {
@@ -557,16 +560,7 @@ function combineExitCodes(current: number, next: number): number {
 }
 
 async function createScanners(config: SecurityBotConfig): Promise<Scanner[]> {
-  const scanners: Scanner[] = [
-    new TrivyStaticScanner(),
-    new TrivyImageScanner(),
-    new ZapApiScanner(),
-  ];
-
-  // Add GraphQL scanner if configured
-  if (config.scanners.graphql?.enabled) {
-    scanners.push(new GraphQLScanner());
-  }
+  const scanners: Scanner[] = [new TrivyStaticScanner(), new ZapApiScanner()];
 
   // Add AI scanner if configured
   if (config.scanners.ai.enabled && config.scanners.ai.provider) {
@@ -608,7 +602,6 @@ async function createScanners(config: SecurityBotConfig): Promise<Scanner[]> {
 function getEnabledCategories(config: SecurityBotConfig): ScannerCategory[] {
   const categories: ScannerCategory[] = [];
   if (config.scanners.static.enabled) categories.push("static");
-  if (config.scanners.container.enabled) categories.push("container");
   if (config.scanners.dynamic.enabled) categories.push("dynamic");
   if (config.scanners.ai.enabled) categories.push("ai");
   return categories;
@@ -666,9 +659,7 @@ async function runConfiguredScans(options: RunConfiguredScansOptions): Promise<S
     });
   }
 
-  const sharedCategories = options.enabledCategories.filter(
-    (category) => category === "static" || category === "container"
-  );
+  const sharedCategories = options.enabledCategories.filter((category) => category === "static");
   const roleCategories = options.enabledCategories.filter(
     (category) => category === "dynamic" || category === "ai"
   );

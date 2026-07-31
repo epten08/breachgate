@@ -9,6 +9,7 @@ import {
   requestDelayMs,
 } from "../safety/safety.js";
 import { sleep } from "../utils/network.js";
+import { ExploitProof } from "../findings/finding.js";
 
 export interface TestResult {
   testCase: SecurityTestCase;
@@ -20,6 +21,31 @@ export interface TestResult {
   };
   isVulnerable: boolean;
   matchedCriteria: string[];
+  /**
+   * Positive proof of exploitation observed in this response. Empty means the
+   * test did not demonstrate anything, whatever else matched.
+   */
+  proofs: ExploitProof[];
+  /** The exact response substring backing the proof. */
+  proofExcerpt?: string;
+  /**
+   * Missing security headers seen on this response.
+   *
+   * Kept strictly separate from matchedCriteria. These are observations about
+   * the response, not evidence that the test's attack worked, and they must
+   * never influence isVulnerable. Folding them into the criteria list is what
+   * caused a header miss to be reported as a confirmed SQL injection.
+   */
+  missingHeaders: string[];
+}
+
+export interface ExecutionOutcome {
+  results: TestResult[];
+  /** Tests that could not be executed at all (network errors, timeouts). */
+  erroredTests: number;
+  /** Tests skipped by safety policy. */
+  skippedTests: number;
+  attemptedTests: number;
 }
 
 interface BaselineResponse {
@@ -27,6 +53,13 @@ interface BaselineResponse {
   body: string;
   timing: number;
 }
+
+/** Headers reported as observations. Never treated as exploitation evidence. */
+const OBSERVED_SECURITY_HEADERS = [
+  "x-content-type-options",
+  "x-frame-options",
+  "strict-transport-security",
+];
 
 export class TestExecutor {
   private ctx: ExecutionContext;
@@ -41,30 +74,44 @@ export class TestExecutor {
   // Task 1: parallel execution with a concurrency cap so we don't flood the target.
   // Task 2: captures benign baseline responses before attack tests so bodyContains
   //         matches that appear in normal responses are not counted as evidence.
-  async execute(testCases: SecurityTestCase[], concurrency = 5): Promise<TestResult[]> {
+  /**
+   * Run the test cases and report exactly what happened.
+   *
+   * Errors are counted, not swallowed. Previously a network failure on every
+   * test produced an empty result set that the orchestrator recorded as a
+   * successful scan, so a typo in the target URL yielded a SAFE verdict. The
+   * caller now sees the error count and can escalate to INCONCLUSIVE.
+   */
+  async execute(testCases: SecurityTestCase[], concurrency = 5): Promise<ExecutionOutcome> {
     const baselines = await this.captureBaselines(testCases);
 
     const settled: TestResult[] = [];
     const active = new Set<Promise<void>>();
+    let erroredTests = 0;
+    let skippedTests = 0;
+    let attemptedTests = 0;
 
     for (const testCase of testCases) {
       const skipReason = this.getSkipReason(testCase);
       if (skipReason) {
         logger.debug(`Skipping: ${testCase.name} - ${skipReason}`);
+        skippedTests++;
         continue;
       }
 
+      attemptedTests++;
       const task = (async () => {
         try {
           await this.applyThrottle();
           const key = this.endpointKey(testCase);
           const result = await this.executeTest(testCase, baselines.get(key));
           settled.push(result);
-          if (result.isVulnerable) {
+          if (result.proofs.length > 0) {
             logger.finding(this.inferSeverity(testCase.category), testCase.name);
           }
         } catch (err) {
-          logger.debug(`Test failed: ${testCase.name} - ${(err as Error).message}`);
+          erroredTests++;
+          logger.debug(`Test errored: ${testCase.name} - ${(err as Error).message}`);
         }
       })();
 
@@ -76,8 +123,9 @@ export class TestExecutor {
       }
     }
 
-    await Promise.allSettled(active);
-    return settled;
+    await Promise.allSettled([...active]);
+
+    return { results: settled, erroredTests, skippedTests, attemptedTests };
   }
 
   // Sends a benign request (no attack payload, clean path) to each unique endpoint
@@ -164,7 +212,7 @@ export class TestExecutor {
       const body = await response.text();
       const responseHeaders = this.headersToObject(response.headers);
 
-      const { isVulnerable, matchedCriteria } = this.evaluateResponse(
+      const evaluation = this.evaluateResponse(
         testCase,
         response.status,
         responseHeaders,
@@ -176,8 +224,11 @@ export class TestExecutor {
       return {
         testCase,
         response: { status: response.status, headers: responseHeaders, body, timing },
-        isVulnerable,
-        matchedCriteria,
+        isVulnerable: evaluation.proofs.length > 0,
+        matchedCriteria: evaluation.matchedCriteria,
+        proofs: evaluation.proofs,
+        proofExcerpt: evaluation.proofExcerpt,
+        missingHeaders: evaluation.missingHeaders,
       };
     } catch (err) {
       clearTimeout(timeoutId);
@@ -193,6 +244,20 @@ export class TestExecutor {
     return obj;
   }
 
+  /**
+   * Decide what a response actually demonstrates.
+   *
+   * The contract: a test is only "vulnerable" if we can point at a substring of
+   * the response that no correctly behaving API would return. Everything else
+   * is an observation.
+   *
+   * Three rules make this safe:
+   *  1. Missing headers are collected separately and never enter matchedCriteria.
+   *  2. Every proof must be absent from the benign baseline. If a clean request
+   *     also produces the signal, the signal is not caused by our payload.
+   *  3. A proof requires an excerpt. If we cannot quote the evidence, we do not
+   *     claim the exploit.
+   */
   private evaluateResponse(
     testCase: SecurityTestCase,
     status: number,
@@ -200,86 +265,168 @@ export class TestExecutor {
     body: string,
     timing: number,
     baseline?: BaselineResponse
-  ): { isVulnerable: boolean; matchedCriteria: string[] } {
+  ): {
+    matchedCriteria: string[];
+    proofs: ExploitProof[];
+    proofExcerpt?: string;
+    missingHeaders: string[];
+  } {
     const matchedCriteria: string[] = [];
+    const proofs: ExploitProof[] = [];
+    const excerpts: string[] = [];
     const expected = testCase.expectedVulnerable;
     const isSuccess = status >= 200 && status < 300;
-
-    // A 404 "route not found" means the router rejected a path-based payload — not a vulnerability.
-    if (status === 404 && /route.*not.*found|could not be found/i.test(body)) {
-      return { isVulnerable: false, matchedCriteria: [] };
-    }
-
     const isAuthRejection = status === 401 || status === 403;
 
-    // Status code match only counts when the attack produced a 2xx that differs from the baseline.
-    if (expected.statusCodes?.includes(status) && isSuccess) {
-      if (!baseline || baseline.status >= 400) {
-        matchedCriteria.push(`Status code ${status} matches expected`);
-      }
+    // Header observations. Reported for visibility, never evidence of an attack
+    // succeeding. Note there is no `isSuccess` gate and no interaction with the
+    // criteria list: these are facts about the response, nothing more.
+    const missingHeaders = OBSERVED_SECURITY_HEADERS.filter((h) => !headers[h]);
+
+    // A 404 route rejection means the router refused the payload path.
+    if (status === 404 && /route.*not.*found|could not be found/i.test(body)) {
+      return { matchedCriteria: [], proofs: [], missingHeaders };
     }
 
-    // Body-contains and header-missing checks only apply on 2xx responses.
+    // An auth rejection means the control worked. Nothing here is exploitation.
+    if (isAuthRejection) {
+      return { matchedCriteria: [], proofs: [], missingHeaders };
+    }
+
+    const baselineBody = baseline?.body?.toLowerCase() ?? "";
+    const record = (proof: ExploitProof, criterion: string, excerpt: string) => {
+      proofs.push(proof);
+      matchedCriteria.push(criterion);
+      excerpts.push(excerpt);
+    };
+
+    // --- Proof: database error text produced by an injected payload ----------
+    const sqlError = matchWithExcerpt(
+      body,
+      /(?:sql syntax|syntax error at or near|unterminated quoted string|mysql_fetch|ORA-\d{5}|SQLSTATE\[|sqlite3?\.OperationalError|near ".*": syntax error)/i
+    );
+    if (sqlError && !baselineBody.includes(sqlError.toLowerCase())) {
+      record("sql-error", "Database error triggered by payload", sqlError);
+    }
+
+    // --- Proof: output of an injected shell command --------------------------
+    // Deliberately narrow. An earlier version also matched "/bin/bash", which
+    // appears in every /etc/passwd, so reading a file was misreported as
+    // command execution. Only shapes unique to command output qualify.
+    const commandOutput = matchWithExcerpt(
+      body,
+      /(?:uid=\d+\([\w-]+\)\s+gid=\d+\([\w-]+\)|total \d+\s*\n\s*d[rwx-]{9}|Linux \S+ \d+\.\d+\.\d+)/
+    );
+    if (commandOutput && !baselineBody.includes(commandOutput.toLowerCase())) {
+      record("command-output", "Injected command output returned", commandOutput);
+    }
+
+    // --- Proof: cloud instance metadata reached via SSRF ---------------------
+    const metadata = matchWithExcerpt(
+      body,
+      /(?:ami-[0-9a-f]{8,}|"AccessKeyId"|instance-identity\/document|metadata\.google\.internal|169\.254\.169\.254)/i
+    );
+    if (metadata && !baselineBody.includes(metadata.toLowerCase())) {
+      record("cloud-metadata", "Cloud instance metadata reachable", metadata);
+    }
+
+    // --- Proof: file contents or system paths returned -----------------------
+    const pathDisclosure = matchWithExcerpt(
+      body,
+      /(?:root:[x*]:0:0:|\[boot loader\]|\/etc\/(?:passwd|shadow)\b|C:\\Windows\\win\.ini)/i
+    );
+    if (pathDisclosure && !baselineBody.includes(pathDisclosure.toLowerCase())) {
+      record("path-disclosure", "Server file contents returned", pathDisclosure);
+    }
+
+    // --- Proof: unhandled exception detail leaked to the caller --------------
+    const stackTrace = matchWithExcerpt(
+      body,
+      /(?:\bat\s+[\w$.<>[\]]+\s*\([^)]*\.(?:js|mjs|ts|java|py|rb|go|php):\d+|Traceback \(most recent call last\)|Exception in thread|\bat [\w.$]+\([\w.]+\.java:\d+\))/
+    );
+    if (stackTrace && !baselineBody.includes(stackTrace.toLowerCase())) {
+      record("stack-trace", "Unhandled exception detail returned", stackTrace);
+    }
+
+    // --- Proof: our own payload reflected back unescaped ---------------------
+    // Only counts when the payload is distinctive enough to be ours, is script
+    // capable, and is not already present in the benign baseline.
     if (isSuccess) {
-      if (expected.bodyContains) {
-        for (const needle of expected.bodyContains) {
-          const inBody = body.toLowerCase().includes(needle.toLowerCase());
-          // Task 2: skip the match if the same string appeared in the benign baseline response.
-          // This eliminates generic words ("id", "success") that appear in every normal response.
-          const inBaseline = baseline?.body.toLowerCase().includes(needle.toLowerCase()) ?? false;
-          if (inBody && !inBaseline) {
-            matchedCriteria.push(`Body contains "${needle}"`);
-          }
-        }
-      }
+      for (const payload of extractPayloads(testCase)) {
+        if (payload.length < 8) continue;
+        if (!/<script|javascript:|onerror\s*=|<img[\s>]|<svg[\s>]/i.test(payload)) continue;
+        if (!body.includes(payload)) continue;
+        if (baselineBody.includes(payload.toLowerCase())) continue;
 
-      if (expected.headerMissing) {
-        for (const header of expected.headerMissing) {
-          if (!headers[header.toLowerCase()]) {
-            matchedCriteria.push(`Missing security header: ${header}`);
-          }
-        }
+        record("payload-reflected", "Attack payload reflected unescaped", payload);
+        break;
       }
+    }
 
-      const securityHeaders = [
-        "x-content-type-options",
-        "x-frame-options",
-        "strict-transport-security",
-      ];
-      for (const header of securityHeaders) {
-        if (!headers[header] && !expected.headerMissing?.includes(header)) {
-          matchedCriteria.push(`Missing security header: ${header}`);
+    // --- Proof: privileged field accepted via mass assignment ---------------
+    //
+    // Mass assignment means WE SENT a privileged value and the server bound it.
+    // Merely seeing "role":"admin" in a response is not proof: an endpoint that
+    // legitimately returns a user record will contain exactly that, and reading
+    // it as mass assignment reports every user-lookup endpoint as exploitable.
+    if (isSuccess) {
+      const sent = privilegedFieldsSent(testCase);
+      for (const { field, value } of sent) {
+        const echoed = matchWithExcerpt(
+          body,
+          new RegExp(`"${escapeRegex(field)}"\\s*:\\s*"?${escapeRegex(value)}"?`, "i")
+        );
+        if (echoed && !baselineBody.includes(echoed.toLowerCase())) {
+          record("privileged-field", `Privileged field '${field}' was sent and accepted`, echoed);
+          break;
         }
       }
     }
 
-    // Task 3: time-based blind injection — response significantly slower than baseline.
-    // Threshold: >3 000 ms AND at least 3× the baseline timing.
-    if (!isAuthRejection && baseline && timing > 3000 && timing > baseline.timing * 3) {
+    // --- NOT a proof: status change between baseline and attack -------------
+    //
+    // A 4xx baseline turning into a 2xx attack cannot establish an auth bypass.
+    // captureBaselines strips the query string, so any endpoint that requires a
+    // parameter returns 4xx unparameterised and 2xx once parameters are
+    // supplied. Reading that as authorization bypass fired on three unrelated
+    // endpoints of the demo API, including a plain search route.
+    //
+    // Proving auth bypass requires comparing an authenticated request against an
+    // unauthenticated one, which is what multi-role scanning does, not a
+    // benign-versus-attack payload diff. Recorded as an observation only.
+    if (isSuccess && baseline && baseline.status >= 400) {
       matchedCriteria.push(
-        `Response delayed ${timing}ms vs baseline ${baseline.timing}ms — possible blind injection`
+        `Returned ${status} where the parameterless baseline returned ${baseline.status}`
       );
     }
 
-    // Definitive exploitation indicators — check on all non-auth-rejection responses.
-    if (!isAuthRejection) {
-      const vulnIndicators = [
-        {
-          pattern: /sql.*error|syntax.*error|mysql.*error|postgresql.*error|sqlite.*error/i,
-          name: "SQL error",
-        },
-        { pattern: /stack.*trace|exception.*at\s+\w+\./i, name: "Stack trace" },
-        { pattern: /<script[\s>]|javascript:/i, name: "Unescaped script" },
-        { pattern: /password\s*[:=]|api[_-]?key\s*[:=]|secret\s*[:=]/i, name: "Sensitive data" },
-      ];
-      for (const indicator of vulnIndicators) {
-        if (indicator.pattern.test(body)) {
-          matchedCriteria.push(`Response contains ${indicator.name}`);
+    // --- Non-proof observations ---------------------------------------------
+    // Expected body markers are useful signal for a human but are not proof:
+    // an LLM-chosen needle can appear for entirely innocent reasons.
+    if (isSuccess && expected.bodyContains) {
+      for (const needle of expected.bodyContains) {
+        const inBody = body.toLowerCase().includes(needle.toLowerCase());
+        const inBaseline = baselineBody.includes(needle.toLowerCase());
+        if (inBody && !inBaseline) {
+          matchedCriteria.push(`Body contains "${needle}" (not in baseline)`);
         }
       }
     }
 
-    return { isVulnerable: matchedCriteria.length > 0, matchedCriteria };
+    // Timing signal is recorded as an observation only. A single slow response
+    // is not an oracle; confirmTimingOracle promotes it to proof if it repeats.
+    if (baseline && timing > 3000 && timing > baseline.timing * 3) {
+      matchedCriteria.push(
+        `Response delayed ${timing}ms vs baseline ${baseline.timing}ms (unconfirmed)`
+      );
+    }
+
+    return {
+      matchedCriteria,
+      proofs,
+      proofExcerpt: excerpts.length > 0 ? excerpts.join(" | ").slice(0, 500) : undefined,
+      missingHeaders,
+    };
   }
 
   private inferSeverity(category: string): string {
@@ -322,4 +469,83 @@ export class TestExecutor {
       await sleep(delay - elapsed);
     }
   }
+}
+
+/**
+ * Return the matched substring so a proof can quote itself.
+ * Returns undefined rather than true/false: a proof without an excerpt is not
+ * a proof, because a developer cannot verify it.
+ */
+function matchWithExcerpt(body: string, pattern: RegExp): string | undefined {
+  const match = body.match(pattern);
+  if (!match) return undefined;
+  const start = Math.max(0, (match.index ?? 0) - 40);
+  return body.slice(start, (match.index ?? 0) + match[0].length + 40).trim();
+}
+
+const PRIVILEGED_FIELD = /^(role|is_?admin|isadmin|permissions?|scope|privilege|admin)$/i;
+const PRIVILEGED_VALUE = /^(admin|superuser|root|true|1)$/i;
+
+/**
+ * Privileged fields this test case actually sent, in body or query string.
+ * Mass assignment cannot be proven from a response alone; we have to know we
+ * supplied the value in the first place.
+ */
+function privilegedFieldsSent(testCase: SecurityTestCase): Array<{ field: string; value: string }> {
+  const found: Array<{ field: string; value: string }> = [];
+
+  const consider = (field: string, value: unknown) => {
+    const str = String(value);
+    if (PRIVILEGED_FIELD.test(field) && PRIVILEGED_VALUE.test(str)) {
+      found.push({ field, value: str });
+    }
+  };
+
+  if (testCase.request.body && typeof testCase.request.body === "object") {
+    for (const [field, value] of Object.entries(testCase.request.body as Record<string, unknown>)) {
+      consider(field, value);
+    }
+  }
+
+  const queryStart = testCase.request.path.indexOf("?");
+  if (queryStart >= 0) {
+    const params = new URLSearchParams(testCase.request.path.slice(queryStart + 1));
+    for (const [field, value] of params.entries()) {
+      consider(field, value);
+    }
+  }
+
+  return found;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * The individual attack VALUES this test case sent, longest first.
+ *
+ * Values, not the raw query string. An earlier version returned
+ * `q=<script>alert(1)</script>` including the parameter name, so the reflection
+ * check compared against a string the response could never contain and every
+ * reflected XSS was missed.
+ */
+function extractPayloads(testCase: SecurityTestCase): string[] {
+  const values: string[] = [];
+
+  if (testCase.request.body && typeof testCase.request.body === "object") {
+    for (const value of Object.values(testCase.request.body as Record<string, unknown>)) {
+      if (typeof value === "string") values.push(value);
+    }
+  }
+
+  const queryStart = testCase.request.path.indexOf("?");
+  if (queryStart >= 0) {
+    const params = new URLSearchParams(testCase.request.path.slice(queryStart + 1));
+    for (const value of params.values()) {
+      values.push(value);
+    }
+  }
+
+  return values.sort((a, b) => b.length - a.length);
 }

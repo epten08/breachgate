@@ -78,24 +78,12 @@ export interface ScannersConfig {
       ignoreUnfixed?: boolean;
     };
   };
-  container: {
-    enabled: boolean;
-    images?: string[];
-    trivy?: {
-      severityThreshold?: Severity;
-      ignoreUnfixed?: boolean;
-    };
-  };
   dynamic: {
     enabled: boolean;
     zap?: {
       apiScanType?: "api" | "full";
       maxDuration?: number;
     };
-  };
-  graphql?: {
-    enabled: boolean;
-    endpoint?: string;
   };
   ai: {
     enabled: boolean;
@@ -110,6 +98,23 @@ export interface ScannersConfig {
     saveTests?: string;
   };
   plugins?: string[];
+}
+
+/**
+ * Exploit intelligence configuration.
+ *
+ * EPSS (exploit probability) and CISA KEV (confirmed in-the-wild exploitation)
+ * replace hand-tuned category coefficients for CVE-bearing findings.
+ */
+export interface IntelConfig {
+  /** Set false to run fully offline. Scores fall back to the on-disk cache. */
+  enabled?: boolean;
+  /** Cache location for EPSS and KEV data. */
+  cacheDir?: string;
+  /** How long cached intel stays fresh, in hours. */
+  cacheTtlHours?: number;
+  /** Per-request timeout in milliseconds. */
+  timeoutMs?: number;
 }
 
 export type ReportFormat = "markdown" | "json" | "sarif" | "html";
@@ -165,6 +170,7 @@ export interface SecurityBotConfig {
   };
   safety?: SafetyConfig;
   policy?: PolicyConfig;
+  intel?: IntelConfig;
   reporting: ReportingConfig;
   notifications?: NotificationConfig;
 }
@@ -174,13 +180,18 @@ const DEFAULT_CONFIG: SecurityBotConfig = {
   target: {},
   scanners: {
     static: { enabled: true },
-    container: { enabled: true },
     dynamic: { enabled: true },
     ai: { enabled: false },
   },
   thresholds: {
     failOn: "HIGH",
     warnOn: "MEDIUM",
+  },
+  intel: {
+    enabled: true,
+    cacheDir: ".breach-gate-cache",
+    cacheTtlHours: 24,
+    timeoutMs: 5000,
   },
   safety: {
     profile: "safe-active",
@@ -252,13 +263,13 @@ function mergeConfig(
     auth: overrides.auth ?? defaults.auth,
     scanners: {
       static: { ...defaults.scanners.static, ...overrides.scanners?.static },
-      container: { ...defaults.scanners.container, ...overrides.scanners?.container },
       dynamic: { ...defaults.scanners.dynamic, ...overrides.scanners?.dynamic },
       ai: { ...defaults.scanners.ai, ...overrides.scanners?.ai },
       plugins: overrides.scanners?.plugins ?? defaults.scanners.plugins,
     },
     thresholds: { ...defaults.thresholds, ...overrides.thresholds },
     safety: { ...defaults.safety, ...overrides.safety },
+    intel: { ...defaults.intel, ...overrides.intel },
     policy: overrides.policy
       ? {
           ...defaults.policy,

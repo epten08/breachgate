@@ -1,7 +1,7 @@
 {
   "name": "breach-gate",
-  "version": "1.2.3",
-  "description": "OWASP API security scanner with AI-assisted behavioral testing, static analysis, container scanning, and GraphQL probing.",
+  "version": "2.0.0",
+  "description": "API deploy gate. Blocks a deployment only on proven exploitation, with EPSS and CISA KEV prioritisation and published precision numbers.",
   "homepage": "https://github.com/epten08/breachgate#readme",
   "repository": {
     "type": "git",
@@ -11,20 +11,18 @@
     "url": "https://github.com/epten08/breachgate/issues"
   },
   "keywords": [
-    "owasp",
     "api-security",
-    "security-scanner",
-    "penetration-testing",
+    "deploy-gate",
     "devsecops",
-    "sast",
-    "graphql-security",
-    "jwt-security",
-    "ssrf",
-    "sql-injection",
-    "github-actions",
-    "ci-security",
+    "dast",
+    "owasp",
+    "epss",
+    "cisa-kev",
     "vulnerability-scanner",
-    "owasp-top-10"
+    "ci-security",
+    "github-actions",
+    "exploit-verification",
+    "openapi"
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -44,7 +42,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc",
     "build:watch": "tsc --watch",
     "prepack": "npm run build",
     "typecheck": "tsc --noEmit",
@@ -55,13 +53,18 @@
     "test:cli": "vitest run test/cli.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:all": "npm run typecheck && npm test && npm run test:cli && npm run build",
+    "test:all": "npm run typecheck && npm run test:controls && npm run precision && npm test && npm run test:cli && npm run build",
     "lint": "eslint src test",
     "lint:fix": "eslint src test --fix",
     "format": "prettier --write src test",
     "format:check": "prettier --check src test",
     "sbom": "node scripts/generate-sbom.mjs",
-    "demo": "tsx demo/vulnerable-api.ts"
+    "demo": "tsx demo/vulnerable-api.ts",
+    "test:controls": "vitest run test/negative-controls.test.ts",
+    "precision": "vitest run test/precision.test.ts",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "scan:demo": "tsx src/cli/index.ts scan --workdir demo --config security.config.yml -v",
+    "scan:demo:ci": "tsx src/cli/index.ts scan --workdir demo --config security.config.yml --ci --format json,markdown"
   },
   "author": "epten08",
   "license": "MIT",
@@ -86,4 +89,3 @@
     "vitest": "^2.0.0"
   }
 }
-

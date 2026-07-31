@@ -1,16 +1,19 @@
-# Breach Gate Configuration for Demo Vulnerable API
-# This config demonstrates scanning the intentionally vulnerable API
+# Breach Gate configuration for the demo vulnerable API.
+#
+# Run from the repository root:
+#   npm run demo                 # start the API on :3000
+#   npm run scan:demo            # scan it, no API key required
+#
+# The AI scanner replays a checked-in set of test cases (demo/ai-tests.json)
+# instead of calling a model, so this is deterministic and free to run.
+
+version: "1.0"
 
 target:
-  # Option 1: Use docker-compose to spin up the API
-  dockerCompose: "./docker-compose.yml"
+  baseUrl: "http://localhost:3000"
   healthEndpoint: "/health"
   healthTimeout: 60000
 
-  # Option 2: Target a running instance directly
-  # baseUrl: "http://localhost:3000"
-
-  # API endpoints to scan
   endpoints:
     - path: "/api/login"
       method: "POST"
@@ -34,46 +37,48 @@ target:
     - path: "/api/file"
       method: "GET"
       params:
-        path: "/etc/passwd"
+        path: "/tmp/report.txt"
     - path: "/api/data"
       method: "GET"
       params:
         id: "1"
 
+auth:
+  type: none
+
 scanners:
+  # Off by default so the demo runs without Trivy or Docker installed.
   static:
-    enabled: true
-    tool: "trivy"
-    paths:
-      - "."
+    enabled: false
 
-  container:
-    enabled: true
-    tool: "trivy"
-    images:
-      - "vulnerable-demo-api:latest"
-
+  # Off by default so the demo runs without ZAP installed.
   dynamic:
-    enabled: true
-    tool: "zap"
-    scanType: "api"
-    maxDuration: 300
+    enabled: false
 
   ai:
     enabled: true
     provider: "ollama"
     model: "llama3"
     maxTests: 20
-    categories:
-      - "injection"
-      - "authentication"
-      - "authorization"
-      - "xss"
-      - "idor"
+    # Replay checked-in test cases rather than calling a model.
+    # Delete this line to have the configured provider generate fresh cases.
+    replayTests: "./ai-tests.json"
+
+# The demo runs on localhost with no CVE-bearing findings, so there is nothing
+# for EPSS or KEV to enrich. Disabled to keep the demo fully offline.
+intel:
+  enabled: false
 
 thresholds:
   failOn: "HIGH"
-  maxFindings: 100
+  warnOn: "MEDIUM"
+
+safety:
+  profile: "safe-active"
+  allowedHosts:
+    - localhost
+    - 127.0.0.1
+  maxRequestsPerSecond: 0
 
 reporting:
   formats:
@@ -81,4 +86,3 @@ reporting:
     - "json"
   outputDir: "./reports"
   includeEvidence: true
-

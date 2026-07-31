@@ -3,13 +3,18 @@
   "title": "Breach Gate Security Configuration",
   "description": "Configuration schema for security.config.yml",
   "type": "object",
-  "required": ["version", "target"],
+  "required": [
+    "version"
+  ],
   "additionalProperties": false,
   "properties": {
     "version": {
       "type": "string",
       "description": "Config schema version",
-      "enum": ["1.0", "1.0.0"]
+      "enum": [
+        "1.0",
+        "1.0.0"
+      ]
     },
     "target": {
       "type": "object",
@@ -22,7 +27,7 @@
         },
         "dockerCompose": {
           "type": "string",
-          "description": "Path to docker-compose.yml — Breach Gate will start and stop it automatically"
+          "description": "Path to docker-compose.yml \u2014 Breach Gate will start and stop it automatically"
         },
         "openApiSpec": {
           "type": "string",
@@ -44,20 +49,37 @@
           "description": "Manual endpoint list (used when no OpenAPI spec is available)",
           "items": {
             "type": "object",
-            "required": ["path"],
+            "required": [
+              "path"
+            ],
             "additionalProperties": false,
             "properties": {
-              "path": { "type": "string", "description": "Endpoint path (e.g. /api/users)" },
+              "path": {
+                "type": "string",
+                "description": "Endpoint path (e.g. /api/users)"
+              },
               "method": {
                 "type": "string",
-                "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+                "enum": [
+                  "GET",
+                  "POST",
+                  "PUT",
+                  "PATCH",
+                  "DELETE",
+                  "HEAD",
+                  "OPTIONS"
+                ],
                 "default": "GET"
               },
-              "description": { "type": "string" },
+              "description": {
+                "type": "string"
+              },
               "params": {
                 "type": "object",
                 "description": "Path parameter examples",
-                "additionalProperties": { "type": "string" }
+                "additionalProperties": {
+                  "type": "string"
+                }
               },
               "body": {
                 "type": "object",
@@ -75,25 +97,55 @@
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["none", "jwt", "apikey", "session"],
+          "enum": [
+            "none",
+            "jwt",
+            "apikey",
+            "session"
+          ],
           "description": "Primary auth type"
         },
-        "role": { "type": "string", "description": "Role name for this auth context" },
-        "token": { "type": "string", "description": "JWT token (supports ${ENV_VAR} interpolation)" },
-        "apiKey": { "type": "string", "description": "API key value" },
-        "headerName": { "type": "string", "description": "Header name for API key (default: X-API-Key)", "default": "X-API-Key" },
-        "cookieName": { "type": "string", "description": "Cookie name for session auth" },
-        "cookieValue": { "type": "string", "description": "Cookie value for session auth" },
+        "role": {
+          "type": "string",
+          "description": "Role name for this auth context"
+        },
+        "token": {
+          "type": "string",
+          "description": "JWT token (supports ${ENV_VAR} interpolation)"
+        },
+        "apiKey": {
+          "type": "string",
+          "description": "API key value"
+        },
+        "headerName": {
+          "type": "string",
+          "description": "Header name for API key (default: X-API-Key)",
+          "default": "X-API-Key"
+        },
+        "cookieName": {
+          "type": "string",
+          "description": "Cookie name for session auth"
+        },
+        "cookieValue": {
+          "type": "string",
+          "description": "Cookie value for session auth"
+        },
         "headers": {
           "type": "object",
           "description": "Additional headers to include with every request",
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": {
+            "type": "string"
+          }
         },
-        "preScan": { "$ref": "#/definitions/authHook" },
+        "preScan": {
+          "$ref": "#/definitions/authHook"
+        },
         "roles": {
           "type": "array",
-          "description": "Multi-role scanning — runs dynamic/AI scanners once per role",
-          "items": { "$ref": "#/definitions/authRole" }
+          "description": "Multi-role scanning \u2014 runs dynamic/AI scanners once per role",
+          "items": {
+            "$ref": "#/definitions/authRole"
+          }
         }
       }
     },
@@ -105,36 +157,26 @@
         "static": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled"],
+          "required": [
+            "enabled"
+          ],
           "properties": {
-            "enabled": { "type": "boolean", "description": "Run Trivy filesystem scan", "default": true },
-            "trivy": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "severityThreshold": { "$ref": "#/definitions/severity" },
-                "ignoreUnfixed": { "type": "boolean", "default": false }
-              }
-            }
-          }
-        },
-        "container": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["enabled"],
-          "properties": {
-            "enabled": { "type": "boolean", "description": "Run Trivy image vulnerability scan", "default": true },
-            "images": {
-              "type": "array",
-              "description": "Docker image names to scan (auto-detected from docker-compose if omitted)",
-              "items": { "type": "string" }
+            "enabled": {
+              "type": "boolean",
+              "description": "Run Trivy filesystem scan",
+              "default": true
             },
             "trivy": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "severityThreshold": { "$ref": "#/definitions/severity" },
-                "ignoreUnfixed": { "type": "boolean", "default": false }
+                "severityThreshold": {
+                  "$ref": "#/definitions/severity"
+                },
+                "ignoreUnfixed": {
+                  "type": "boolean",
+                  "default": false
+                }
               }
             }
           }
@@ -142,16 +184,25 @@
         "dynamic": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled"],
+          "required": [
+            "enabled"
+          ],
           "properties": {
-            "enabled": { "type": "boolean", "description": "Run OWASP ZAP API scan", "default": true },
+            "enabled": {
+              "type": "boolean",
+              "description": "Run OWASP ZAP API scan",
+              "default": true
+            },
             "zap": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
                 "apiScanType": {
                   "type": "string",
-                  "enum": ["api", "full"],
+                  "enum": [
+                    "api",
+                    "full"
+                  ],
                   "description": "api = passive spider + scan; full = active attack scan",
                   "default": "api"
                 },
@@ -168,12 +219,22 @@
         "ai": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled"],
+          "required": [
+            "enabled"
+          ],
           "properties": {
-            "enabled": { "type": "boolean", "description": "Run LLM-powered behavioral security tests", "default": false },
+            "enabled": {
+              "type": "boolean",
+              "description": "Run LLM-powered behavioral security tests",
+              "default": false
+            },
             "provider": {
               "type": "string",
-              "enum": ["ollama", "openai", "anthropic"],
+              "enum": [
+                "ollama",
+                "openai",
+                "anthropic"
+              ],
               "description": "LLM provider"
             },
             "model": {
@@ -219,7 +280,9 @@
         "plugins": {
           "type": "array",
           "description": "Paths to custom scanner plugin files (JS/TS). Each must export a default Scanner or named 'scanner' export.",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
@@ -247,24 +310,32 @@
       "properties": {
         "profile": {
           "type": "string",
-          "enum": ["passive", "safe-active", "full-active"],
+          "enum": [
+            "passive",
+            "safe-active",
+            "full-active"
+          ],
           "description": "passive = no active requests; safe-active = authenticated seeding + passive ZAP (default); full-active = destructive methods enabled",
           "default": "safe-active"
         },
         "allowProductionTargets": {
           "type": "boolean",
-          "description": "Allow scanning production hostnames (default: false — fails fast on prod URLs)",
+          "description": "Allow scanning production hostnames (default: false \u2014 fails fast on prod URLs)",
           "default": false
         },
         "allowedHosts": {
           "type": "array",
           "description": "Explicit allowlist of hostnames/IPs the scanner may contact",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "excludedPaths": {
           "type": "array",
           "description": "Endpoint paths to never scan",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
         "maxRequestsPerSecond": {
           "type": "number",
@@ -286,7 +357,12 @@
       "properties": {
         "profile": {
           "type": "string",
-          "enum": ["pull-request", "main", "release", "nightly"],
+          "enum": [
+            "pull-request",
+            "main",
+            "release",
+            "nightly"
+          ],
           "description": "Active policy profile. pull-request = lenient; release = strictest"
         },
         "baselinePath": {
@@ -304,11 +380,17 @@
           "additionalProperties": {
             "type": "object",
             "properties": {
-              "failOn": { "$ref": "#/definitions/severity" },
-              "warnOn": { "$ref": "#/definitions/severity" },
+              "failOn": {
+                "$ref": "#/definitions/severity"
+              },
+              "warnOn": {
+                "$ref": "#/definitions/severity"
+              },
               "requireScanners": {
                 "type": "array",
-                "items": { "type": "string" }
+                "items": {
+                  "type": "string"
+                }
               }
             }
           }
@@ -330,9 +412,17 @@
           "description": "Report formats to generate",
           "items": {
             "type": "string",
-            "enum": ["markdown", "json", "sarif", "html"]
+            "enum": [
+              "markdown",
+              "json",
+              "sarif",
+              "html"
+            ]
           },
-          "default": ["markdown", "json"]
+          "default": [
+            "markdown",
+            "json"
+          ]
         },
         "includeEvidence": {
           "type": "boolean",
@@ -349,7 +439,9 @@
         "slack": {
           "type": "object",
           "description": "Post a Slack message via incoming webhook",
-          "required": ["webhookUrl"],
+          "required": [
+            "webhookUrl"
+          ],
           "additionalProperties": false,
           "properties": {
             "webhookUrl": {
@@ -370,7 +462,10 @@
         "github": {
           "type": "object",
           "description": "Create/update a GitHub issue or post a PR comment",
-          "required": ["token", "repo"],
+          "required": [
+            "token",
+            "repo"
+          ],
           "additionalProperties": false,
           "properties": {
             "token": {
@@ -396,7 +491,9 @@
         "webhook": {
           "type": "object",
           "description": "POST scan results to a generic HTTP endpoint",
-          "required": ["url"],
+          "required": [
+            "url"
+          ],
           "additionalProperties": false,
           "properties": {
             "url": {
@@ -405,7 +502,7 @@
             },
             "secret": {
               "type": "string",
-              "description": "HMAC secret — if set, adds X-Breach-Gate-Signature: sha256=<hmac> header"
+              "description": "HMAC secret \u2014 if set, adds X-Breach-Gate-Signature: sha256=<hmac> header"
             },
             "onlyOnFailure": {
               "type": "boolean",
@@ -415,48 +512,141 @@
           }
         }
       }
+    },
+    "intel": {
+      "type": "object",
+      "description": "Exploit intelligence sources (EPSS and CISA KEV) used for prioritisation.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fetch EPSS and KEV data. When false, only the on-disk cache is used."
+        },
+        "cacheDir": {
+          "type": "string",
+          "default": ".breach-gate-cache",
+          "description": "Directory for cached EPSS and KEV data."
+        },
+        "cacheTtlHours": {
+          "type": "number",
+          "minimum": 0,
+          "default": 24,
+          "description": "How long cached intel stays fresh, in hours."
+        },
+        "timeoutMs": {
+          "type": "number",
+          "minimum": 100,
+          "default": 5000,
+          "description": "Per-request timeout for intel lookups, in milliseconds."
+        }
+      }
     }
   },
   "definitions": {
     "severity": {
       "type": "string",
-      "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "CRITICAL"
+      ]
     },
     "authHook": {
       "type": "object",
       "description": "Shell command to run before scanning to obtain credentials",
-      "required": ["command"],
+      "required": [
+        "command"
+      ],
       "additionalProperties": false,
       "properties": {
-        "command": { "type": "string", "description": "Executable to run" },
-        "args": { "type": "array", "items": { "type": "string" } },
+        "command": {
+          "type": "string",
+          "description": "Executable to run"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "output": {
           "type": "string",
-          "enum": ["raw", "json"],
+          "enum": [
+            "raw",
+            "json"
+          ],
           "description": "raw = treat stdout as the token value; json = parse JSON and extract fields",
           "default": "raw"
         },
-        "tokenField": { "type": "string", "description": "JSON field for JWT token" },
-        "apiKeyField": { "type": "string", "description": "JSON field for API key" },
-        "cookieField": { "type": "string", "description": "JSON field for cookie value" },
-        "headersField": { "type": "string", "description": "JSON field for headers object" },
-        "timeout": { "type": "integer", "description": "Timeout in milliseconds", "default": 10000 }
+        "tokenField": {
+          "type": "string",
+          "description": "JSON field for JWT token"
+        },
+        "apiKeyField": {
+          "type": "string",
+          "description": "JSON field for API key"
+        },
+        "cookieField": {
+          "type": "string",
+          "description": "JSON field for cookie value"
+        },
+        "headersField": {
+          "type": "string",
+          "description": "JSON field for headers object"
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Timeout in milliseconds",
+          "default": 10000
+        }
       }
     },
     "authRole": {
       "type": "object",
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "description": "Role label (e.g. admin, user, anonymous)" },
-        "type": { "type": "string", "enum": ["none", "jwt", "apikey", "session"] },
-        "token": { "type": "string" },
-        "apiKey": { "type": "string" },
-        "headerName": { "type": "string" },
-        "cookieName": { "type": "string" },
-        "cookieValue": { "type": "string" },
-        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
-        "preScan": { "$ref": "#/definitions/authHook" }
+        "name": {
+          "type": "string",
+          "description": "Role label (e.g. admin, user, anonymous)"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "none",
+            "jwt",
+            "apikey",
+            "session"
+          ]
+        },
+        "token": {
+          "type": "string"
+        },
+        "apiKey": {
+          "type": "string"
+        },
+        "headerName": {
+          "type": "string"
+        },
+        "cookieName": {
+          "type": "string"
+        },
+        "cookieValue": {
+          "type": "string"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "preScan": {
+          "$ref": "#/definitions/authHook"
+        }
       }
     }
   }
