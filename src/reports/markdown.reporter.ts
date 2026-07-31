@@ -4,7 +4,6 @@ import { sortByRisk } from "../findings/normalizer.js";
 import { RiskEngine, Remediation } from "../findings/risk.engine.js";
 import { AttackAnalyzer, SecurityVerdict } from "../findings/attack.analyzer.js";
 import {
-  feasibilityOf,
   feasibilityLabel,
   explainExploitability,
   scoreFinding,
