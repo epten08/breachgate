@@ -71,81 +71,110 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      - name: Start demo API
-        shell: bash
-        run: |
-          npm run demo &
-          echo $! > demo-api.pid
-          for i in {1..30}; do
-            if curl -fsS http://127.0.0.1:3000/health >/dev/null; then
-              exit 0
-            fi
-            sleep 1
-          done
-          exit 1
-
       # Positive control: the deliberately vulnerable demo must come back UNSAFE
       # with real proofs. It is no longer the only behavioural check in CI, and
       # it is no longer treated as sufficient: the negative controls and the
       # precision gate in the verify job are what catch false positives.
       #
-      # This uses demo/ai-tests.json via scanners.ai.replayTests, so no model or
-      # API key is needed and the run is deterministic. Exit 1 is the expected
-      # outcome, so the step must not fail the job on it.
-      - name: Run Breach Gate demo smoke scan
+      # Start, scan, and assert all happen in ONE step. Previously the API was
+      # started in a separate step and the process did not survive into the next
+      # one, which produced INCONCLUSIVE. That went unnoticed for as long as it
+      # did because the old smoke scan passed --skip-* for every scanner and so
+      # never sent a single request to the demo API.
+      #
+      # The scan replays demo/ai-tests.json via scanners.ai.replayTests, so no
+      # model or API key is needed and the run is deterministic.
+      - name: Start demo API, scan it, and assert the verdict
+        shell: bash
         run: |
+          set -uo pipefail
+
+          cleanup() {
+            if [ -n "${DEMO_PID:-}" ]; then
+              kill "$DEMO_PID" 2>/dev/null || true
+              wait "$DEMO_PID" 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          npm run demo > demo-api.log 2>&1 &
+          DEMO_PID=$!
+          echo "demo API pid: $DEMO_PID"
+
+          ready=0
+          for _ in $(seq 1 40); do
+            if ! kill -0 "$DEMO_PID" 2>/dev/null; then
+              echo "ERROR: demo API exited during startup" >&2
+              cat demo-api.log >&2
+              exit 1
+            fi
+            if curl -fsS http://127.0.0.1:3000/health >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "ERROR: demo API never became healthy" >&2
+            cat demo-api.log >&2
+            exit 1
+          fi
+          echo "demo API is healthy"
+
+          # Exit 1 is the expected verdict here, so do not let it fail the step.
           set +e
           node dist/cli/index.js scan \
             --ci \
             --workdir demo \
             --config security.config.yml \
+            --target http://127.0.0.1:3000 \
             --offline \
             --format json,markdown,sarif \
             --output "$GITHUB_WORKSPACE/security-reports/demo"
           code=$?
           set -e
           echo "breach-gate exit code: $code"
-          if [ "$code" -ge 2 ]; then
-            echo "ERROR: exit $code indicates a crash or config error, not a verdict" >&2
+
+          report="$GITHUB_WORKSPACE/security-reports/demo/security-report.json"
+          if [ ! -f "$report" ]; then
+            echo "ERROR: no JSON report produced" >&2
+            cat demo-api.log >&2
             exit 1
           fi
 
-      # The demo API is exploitable on purpose. A SAFE verdict here means the
-      # detectors stopped working, which is exactly the regression that shipped
-      # in v1 and went unnoticed.
-      - name: Assert the demo is reported as UNSAFE with proofs
-        run: |
-          report=security-reports/demo/security-report.json
-          test -f "$report" || { echo "no JSON report produced" >&2; exit 1; }
-          node -e "
-            const r = require('./' + process.argv[1]);
+          # The demo API is exploitable on purpose. Anything other than UNSAFE
+          # with quotable proofs means the detectors stopped working, which is
+          # exactly the regression that shipped in v1 and went unnoticed.
+          node -e '
+            const r = require(process.argv[1]);
             const verdict = r.verdict.status;
-            const confirmed = r.findings.filter(f => (f.proofs || []).length > 0);
-            const proofs = [...new Set(confirmed.flatMap(f => f.proofs))].sort();
-            console.log('verdict:', verdict);
-            console.log('confirmed findings:', confirmed.length);
-            console.log('proof types:', proofs.join(', ') || '(none)');
-            if (verdict !== 'UNSAFE') {
-              console.error('FAIL: expected UNSAFE, got ' + verdict);
-              process.exit(1);
-            }
-            if (confirmed.length < 3) {
-              console.error('FAIL: expected at least 3 confirmed exploits, got ' + confirmed.length);
-              process.exit(1);
-            }
-            if (confirmed.some(f => !f.proofExcerpt)) {
-              console.error('FAIL: a confirmed finding has no proof excerpt to verify');
-              process.exit(1);
-            }
-          " "$report"
+            const confirmed = r.findings.filter((f) => (f.proofs || []).length > 0);
+            const proofs = [...new Set(confirmed.flatMap((f) => f.proofs))].sort();
 
-      - name: Stop demo API
-        if: always()
-        shell: bash
-        run: |
-          if [ -f demo-api.pid ]; then
-            kill "$(cat demo-api.pid)" || true
-          fi
+            console.log("verdict:", verdict);
+            console.log("confirmed findings:", confirmed.length);
+            console.log("proof types:", proofs.join(", ") || "(none)");
+
+            const fail = (msg) => {
+              console.error("FAIL: " + msg);
+              console.error("scanner status: " + JSON.stringify(r.scannerStatus));
+              console.error("reason: " + r.verdict.reason);
+              process.exit(1);
+            };
+
+            if (verdict !== "UNSAFE") fail("expected UNSAFE, got " + verdict);
+            if (confirmed.length < 3) fail("expected at least 3 confirmed exploits, got " + confirmed.length);
+            if (confirmed.some((f) => !f.proofExcerpt)) fail("a confirmed finding has no proof excerpt to verify");
+          ' "$report"
+
+      - name: Upload demo API log
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: demo-api-log
+          path: demo-api.log
+          if-no-files-found: ignore
 
       - name: Upload demo scan reports
         uses: actions/upload-artifact@v4

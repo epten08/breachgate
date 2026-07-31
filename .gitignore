@@ -22,3 +22,6 @@ test-cli-output/
 src/**/*.js
 src/**/*.js.map
 src/**/*.d.ts
+# Scan output committed by mistake in v1
+demo/reports/
+demo-api.log
