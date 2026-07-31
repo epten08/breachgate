@@ -47,8 +47,8 @@ export class Orchestrator {
   constructor(scanners: Scanner[], options: OrchestratorOptions = {}) {
     this.scanners = scanners;
     this.options = {
-      enabledCategories: ["static", "container", "dynamic"],
-      requiredCategories: ["static", "container", "dynamic"],
+      enabledCategories: ["static", "dynamic"],
+      requiredCategories: ["static", "dynamic"],
       parallel: false,
       continueOnError: true,
       ...options,

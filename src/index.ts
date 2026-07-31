@@ -1,6 +1,7 @@
 export * from "./ai/index.js";
 export * from "./core/index.js";
 export * from "./findings/index.js";
+export * from "./intel/index.js";
 export { EnvironmentManager } from "./orchestrator/environment.manager.js";
 export {
   Orchestrator,

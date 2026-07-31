@@ -70,8 +70,6 @@ target:
 scanners:
   static:
     enabled: false
-  container:
-    enabled: false
   dynamic:
     enabled: false
   ai:
@@ -95,8 +93,6 @@ target:
 scanners:
   static:
     enabled: true
-  container:
-    enabled: false
   dynamic:
     enabled: false
   ai:

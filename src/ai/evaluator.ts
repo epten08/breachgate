@@ -1,10 +1,22 @@
 import { AIClient, AIConfig } from "./adversary.js";
 import { PromptBuilder } from "./prompt.builder.js";
 import { TestResult } from "./executor.js";
-import { SecurityTestCase } from "./test.generator.js";
 import { ExecutionContext } from "../orchestrator/context.js";
 import { RawFinding } from "../findings/raw.finding.js";
+import { ExploitProof } from "../findings/finding.js";
 import { logger } from "../core/logger.js";
+
+/**
+ * Turns executed test results into findings.
+ *
+ * The central inversion versus the previous implementation: classification is
+ * driven by WHAT WE OBSERVED, not by what the test case intended to probe.
+ *
+ * Previously this dispatched on `testCase.category` first, so a test merely
+ * named "SQL injection" produced a CRITICAL SQL Injection finding even when the
+ * only thing matched was a missing response header. Proof type now decides the
+ * category, and the test's own label is used only to disambiguate.
+ */
 
 export interface VulnerabilityAssessment {
   isVulnerable: boolean;
@@ -16,6 +28,88 @@ export interface VulnerabilityAssessment {
     recommendation: string;
   };
 }
+
+interface Classification {
+  type: string;
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  recommendation: string;
+}
+
+/**
+ * What each proof actually demonstrates.
+ *
+ * Every entry here is anchored to an observed response signal, so the category
+ * cannot drift away from the evidence.
+ */
+const PROOF_CLASSIFICATION: Record<ExploitProof, Classification> = {
+  "sql-error": {
+    type: "SQL Injection",
+    severity: "CRITICAL",
+    recommendation:
+      "Use parameterized queries or prepared statements. Never concatenate user input into SQL.",
+  },
+  "command-output": {
+    type: "Command Injection",
+    severity: "CRITICAL",
+    recommendation:
+      "Never pass user input to a shell. Use language-native APIs or execFile with an argument array.",
+  },
+  "cloud-metadata": {
+    type: "Server-Side Request Forgery (SSRF)",
+    severity: "CRITICAL",
+    recommendation:
+      "Allowlist outbound destinations, resolve DNS before fetching, and block link-local and private ranges.",
+  },
+  "path-disclosure": {
+    type: "Path Traversal",
+    severity: "HIGH",
+    recommendation:
+      "Resolve the requested path against an allowed root and reject anything that escapes it.",
+  },
+  "payload-reflected": {
+    type: "Cross-Site Scripting (XSS)",
+    severity: "HIGH",
+    recommendation:
+      "Encode output for its rendering context and set a restrictive Content-Security-Policy.",
+  },
+  "privileged-field": {
+    type: "Mass Assignment",
+    severity: "HIGH",
+    recommendation:
+      "Bind request bodies through an explicit field allowlist. Never pass a raw body to a model update.",
+  },
+  "auth-bypass": {
+    type: "Broken Access Control",
+    severity: "HIGH",
+    recommendation:
+      "Verify authorization server-side on every request. Deny by default and check resource ownership.",
+  },
+  "timing-oracle": {
+    type: "Blind Injection (Time-based)",
+    severity: "HIGH",
+    recommendation:
+      "Use parameterized queries and avoid passing user input into system calls. Confirm manually before shipping a fix.",
+  },
+  "stack-trace": {
+    type: "Information Disclosure",
+    severity: "MEDIUM",
+    recommendation:
+      "Disable detailed error output in production and return a generic error body to callers.",
+  },
+};
+
+/** Ranked worst-first so the reported category matches the worst thing proven. */
+const PROOF_PRIORITY: ExploitProof[] = [
+  "command-output",
+  "sql-error",
+  "cloud-metadata",
+  "path-disclosure",
+  "auth-bypass",
+  "privileged-field",
+  "payload-reflected",
+  "timing-oracle",
+  "stack-trace",
+];
 
 export class TestEvaluator {
   private client: AIClient;
@@ -40,47 +134,110 @@ export class TestEvaluator {
     const findings: RawFinding[] = [];
 
     for (const result of results) {
-      if (!result.isVulnerable) continue;
-
-      // Use rule-based evaluation first since it's reliable and fast
-      // The test executor already identified these as vulnerable based on response patterns
-      let assessment = this.evaluateWithRules(result);
-
-      // If rule-based evaluation didn't classify it, try AI for more nuanced analysis
-      if (!assessment.isVulnerable && this.useAI) {
-        logger.debug(`Using AI to evaluate: ${result.testCase.name}`);
-        assessment = await this.evaluateWithAI(result);
+      // Only proven exploitation becomes a confirmed finding. No proof, no
+      // finding from this path, regardless of what the test was called.
+      if (result.proofs.length === 0) {
+        continue;
       }
 
-      if (assessment.isVulnerable && assessment.vulnerability) {
-        findings.push({
-          source: "AI Security Tester",
-          category: assessment.vulnerability.type,
-          description: `${result.testCase.name}: ${result.testCase.description}`,
-          endpoint: result.testCase.endpoint,
-          role: this.ctx.auth?.role,
-          severityHint: assessment.vulnerability.severity,
-          evidence: assessment.vulnerability.evidence,
-          reference: assessment.vulnerability.recommendation,
-        });
-      }
+      const classification = this.classifyFromProofs(result);
+
+      findings.push({
+        source: "AI Security Tester",
+        category: classification.type,
+        description: `${result.testCase.name}: ${result.testCase.description}`,
+        endpoint: result.testCase.endpoint,
+        role: this.ctx.auth?.role,
+        severityHint: classification.severity,
+        evidence: this.buildEvidence(result),
+        reference: classification.recommendation,
+        proofs: result.proofs,
+        proofExcerpt: result.proofExcerpt,
+      });
+    }
+
+    // Missing security headers are reported once for the whole scan, at LOW,
+    // with no proof attached. They are defence in depth, not a breach, and
+    // must never be able to influence the deploy verdict.
+    const headerFinding = this.summarizeMissingHeaders(results);
+    if (headerFinding) {
+      findings.push(headerFinding);
     }
 
     return findings;
   }
 
-  private async evaluateWithAI(result: TestResult): Promise<VulnerabilityAssessment> {
+  /**
+   * Pick the category from the worst proof observed.
+   *
+   * The test case's own category is consulted only to choose between two
+   * readings of the same signal, never to override the evidence.
+   */
+  private classifyFromProofs(result: TestResult): Classification {
+    const worst = PROOF_PRIORITY.find((p) => result.proofs.includes(p)) ?? result.proofs[0];
+    const base = PROOF_CLASSIFICATION[worst];
+
+    // An auth-bypass proof on a test that was probing object references is more
+    // precisely described as IDOR. Same evidence, narrower name.
+    if (worst === "auth-bypass") {
+      const category = result.testCase.category.toLowerCase();
+      if (category.includes("idor") || category.includes("object reference")) {
+        return { ...base, type: "Broken Access Control (IDOR)" };
+      }
+      if (category.includes("jwt")) {
+        return { ...base, type: "Broken Authentication (JWT)", severity: "CRITICAL" };
+      }
+    }
+
+    return base;
+  }
+
+  private summarizeMissingHeaders(results: TestResult[]): RawFinding | undefined {
+    const missing = new Set<string>();
+    for (const result of results) {
+      for (const header of result.missingHeaders) {
+        missing.add(header);
+      }
+    }
+
+    if (missing.size === 0) {
+      return undefined;
+    }
+
+    return {
+      source: "AI Security Tester",
+      category: "Missing Security Header",
+      description: `Response headers not set: ${[...missing].join(", ")}`,
+      severityHint: "LOW",
+      evidence:
+        `The following headers were absent from responses: ${[...missing].join(", ")}. ` +
+        "This is defence in depth. No exploitation was demonstrated and this finding does not block deployment. " +
+        "If these are set at your CDN or ingress rather than the origin, this finding is expected.",
+      reference: "https://owasp.org/www-project-secure-headers/",
+      proofs: [],
+    };
+  }
+
+  /**
+   * Optional second opinion from the model.
+   *
+   * The model can add narrative but cannot manufacture a confirmation: proofs
+   * come only from observed response signals in the executor.
+   */
+  async describeWithAI(result: TestResult): Promise<string | undefined> {
+    if (!this.useAI) return undefined;
+
     try {
       const prompt = this.promptBuilder.buildEvaluationPrompt(
         JSON.stringify(result.testCase, null, 2),
         result.response
       );
-
       const response = await this.client.generate(prompt);
-      return this.parseAssessment(response);
+      const parsed = this.parseAssessment(response);
+      return parsed.vulnerability?.evidence;
     } catch (err) {
       logger.debug(`AI evaluation failed: ${(err as Error).message}`);
-      return this.evaluateWithRules(result);
+      return undefined;
     }
   }
 
@@ -102,210 +259,25 @@ export class TestEvaluator {
     }
   }
 
-  private evaluateWithRules(result: TestResult): VulnerabilityAssessment {
-    const { testCase, matchedCriteria } = result;
-
-    // Calculate confidence based on matched criteria
-    const confidence = Math.min(0.3 + matchedCriteria.length * 0.15, 0.95);
-
-    // Determine vulnerability type and severity
-    const vulnInfo = this.classifyVulnerability(testCase, matchedCriteria);
-
-    if (!vulnInfo) {
-      return { isVulnerable: false, confidence: 0 };
-    }
-
-    return {
-      isVulnerable: true,
-      confidence,
-      vulnerability: {
-        type: vulnInfo.type,
-        severity: vulnInfo.severity,
-        evidence: this.buildEvidence(result),
-        recommendation: vulnInfo.recommendation,
-      },
-    };
-  }
-
-  private classifyVulnerability(
-    testCase: SecurityTestCase,
-    matchedCriteria: string[]
-  ): {
-    type: string;
-    severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-    recommendation: string;
-  } | null {
-    const category = testCase.category.toLowerCase();
-    const criteriaStr = matchedCriteria.join(" ").toLowerCase();
-
-    // SQL Injection
-    if (category.includes("injection") || criteriaStr.includes("sql")) {
-      return {
-        type: "SQL Injection",
-        severity: "CRITICAL",
-        recommendation:
-          "Use parameterized queries or prepared statements. Never concatenate user input into SQL queries.",
-      };
-    }
-
-    // XSS
-    if (category.includes("xss") || criteriaStr.includes("script")) {
-      return {
-        type: "Cross-Site Scripting (XSS)",
-        severity: "HIGH",
-        recommendation:
-          "Encode all user input before rendering. Use Content-Security-Policy headers.",
-      };
-    }
-
-    // Authentication bypass
-    if (category.includes("auth") || category.includes("access")) {
-      return {
-        type: "Broken Access Control",
-        severity: "HIGH",
-        recommendation:
-          "Implement proper authentication and authorization checks. Use middleware to verify access.",
-      };
-    }
-
-    // Sensitive data exposure
-    if (criteriaStr.includes("sensitive") || criteriaStr.includes("password")) {
-      return {
-        type: "Sensitive Data Exposure",
-        severity: "HIGH",
-        recommendation: "Never expose sensitive data in responses. Implement proper data masking.",
-      };
-    }
-
-    // SSRF
-    if (category.includes("ssrf") || category.includes("server-side request")) {
-      return {
-        type: "Server-Side Request Forgery (SSRF)",
-        severity: "HIGH",
-        recommendation:
-          "Validate and allowlist URLs accepted by the server. Never fetch attacker-supplied URLs without strict validation.",
-      };
-    }
-
-    // Mass Assignment
-    if (category.includes("mass assignment") || criteriaStr.includes("mass assignment")) {
-      return {
-        type: "Mass Assignment",
-        severity: "HIGH",
-        recommendation:
-          "Use explicit allowlists for accepted request fields. Never bind request bodies directly to model objects.",
-      };
-    }
-
-    // JWT attacks
-    if (
-      category.includes("jwt") ||
-      criteriaStr.includes("jwt") ||
-      criteriaStr.includes("algorithm confusion")
-    ) {
-      return {
-        type: "Broken Authentication (JWT)",
-        severity: "CRITICAL",
-        recommendation:
-          "Enforce algorithm allowlists server-side. Validate all JWT claims. Reject tokens with alg:none.",
-      };
-    }
-
-    // Blind injection (time-based)
-    if (criteriaStr.includes("blind injection") || criteriaStr.includes("response delayed")) {
-      return {
-        type: "Blind Injection (Time-based)",
-        severity: "CRITICAL",
-        recommendation:
-          "Use parameterized queries and avoid passing user input to system calls. Investigate time-delay payloads manually to confirm.",
-      };
-    }
-
-    // Security headers — only report when there is no other substantive finding.
-    // All criteria being header-miss only means no actual exploitation occurred.
-    if (criteriaStr.includes("security header")) {
-      const substantive = matchedCriteria.filter((c) => !c.startsWith("Missing security header"));
-      if (substantive.length === 0) {
-        return {
-          type: "Security Misconfiguration",
-          severity: "MEDIUM",
-          recommendation:
-            "Add security headers: X-Content-Type-Options, X-Frame-Options, Strict-Transport-Security.",
-        };
-      }
-    }
-
-    // Stack trace / error disclosure
-    if (criteriaStr.includes("stack trace") || criteriaStr.includes("exception")) {
-      return {
-        type: "Information Disclosure",
-        severity: "MEDIUM",
-        recommendation:
-          "Disable detailed error messages in production. Log errors server-side only.",
-      };
-    }
-
-    // Command Injection
-    if (category.includes("command") || category.includes("execute")) {
-      return {
-        type: "Command Injection",
-        severity: "CRITICAL",
-        recommendation:
-          "Never pass user input directly to shell commands. Use allowlists for permitted operations.",
-      };
-    }
-
-    // Information Disclosure (debug endpoints, etc.)
-    if (
-      category.includes("disclosure") ||
-      category.includes("debug") ||
-      category.includes("info")
-    ) {
-      return {
-        type: "Information Disclosure",
-        severity: "MEDIUM",
-        recommendation:
-          "Remove or protect debug endpoints. Never expose system information in production.",
-      };
-    }
-
-    // Path Traversal / File access
-    if (category.includes("file") || category.includes("path") || category.includes("traversal")) {
-      return {
-        type: "Path Traversal",
-        severity: "HIGH",
-        recommendation:
-          "Validate and sanitize file paths. Use allowlists for permitted directories.",
-      };
-    }
-
-    // Generic vulnerability — only fire when there is substantive evidence beyond header misses.
-    // Pure header-miss findings are already handled above.
-    const substantiveCriteria = matchedCriteria.filter(
-      (c) => !c.startsWith("Missing security header")
-    );
-    if (substantiveCriteria.length > 0) {
-      return {
-        type: testCase.category || "Security Vulnerability",
-        severity: "MEDIUM",
-        recommendation: "Review the endpoint for security issues based on the matched criteria.",
-      };
-    }
-
-    return null;
-  }
-
+  /**
+   * Evidence a developer can check in ten seconds: the request we sent, the
+   * status we got, the exact substring that proves it, and the response.
+   */
   private buildEvidence(result: TestResult): string {
     const parts: string[] = [];
 
     parts.push(`Request: ${result.testCase.request.method} ${result.testCase.request.path}`);
     parts.push(`Response Status: ${result.response.status}`);
+    parts.push(`Proof: ${result.proofs.join(", ")}`);
 
-    if (result.matchedCriteria.length > 0) {
-      parts.push(`Matched: ${result.matchedCriteria.join(", ")}`);
+    if (result.proofExcerpt) {
+      parts.push(`Proof excerpt: ${result.proofExcerpt}`);
     }
 
-    // Include relevant response snippet
+    if (result.matchedCriteria.length > 0) {
+      parts.push(`Observations: ${result.matchedCriteria.join(", ")}`);
+    }
+
     const bodySnippet = result.response.body.substring(0, 200);
     if (bodySnippet) {
       parts.push(`Response: ${bodySnippet}${result.response.body.length > 200 ? "..." : ""}`);

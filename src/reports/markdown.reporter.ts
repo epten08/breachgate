@@ -3,6 +3,7 @@ import { ReportingConfig } from "../core/config.loader.js";
 import { sortByRisk } from "../findings/normalizer.js";
 import { RiskEngine, Remediation } from "../findings/risk.engine.js";
 import { AttackAnalyzer, SecurityVerdict } from "../findings/attack.analyzer.js";
+import { feasibilityLabel, explainExploitability, scoreFinding } from "../findings/score.js";
 
 export interface MarkdownReporterOptions {
   targetUrl: string;
@@ -393,9 +394,27 @@ export class MarkdownReporter {
       lines.push(`### ${this.getSeverityEmoji(finding.severity)} ${finding.title}`);
       lines.push("");
       lines.push(`**Category:** ${finding.category}`);
+
+      const vector = scoreFinding(finding);
       lines.push(
-        `**Risk Score:** ${finding.riskScore.toFixed(2)} (Exploitability: ${finding.exploitability.toFixed(2)}, Confidence: ${finding.confidence.toFixed(2)})`
+        `**Attack feasibility:** ${vector.feasibilityScore.toFixed(2)} (${feasibilityLabel(finding)}), confidence ${finding.confidence.toFixed(2)}`
       );
+      lines.push(
+        `**Factors:** reachability ${vector.reachability.toFixed(2)} x exploitability ${vector.exploitability.toFixed(2)} x impact ${vector.impact.toFixed(2)} x confidence ${vector.confidence.toFixed(2)}`
+      );
+      // Say where the exploitability number came from, so the reader can tell
+      // real-world evidence apart from a category baseline guess.
+      lines.push(`**Exploitability basis:** ${explainExploitability(finding)}`);
+
+      if (finding.proofs.length > 0) {
+        lines.push(`**Exploitation confirmed:** ${finding.proofs.join(", ")}`);
+        if (finding.proofExcerpt) {
+          lines.push("");
+          lines.push("```");
+          lines.push(finding.proofExcerpt);
+          lines.push("```");
+        }
+      }
 
       if (finding.endpoint) {
         lines.push(`**Endpoint:** \`${finding.endpoint}\``);

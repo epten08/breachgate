@@ -80,7 +80,7 @@ async function checkScannerPrerequisites(
     (await checkCommand("zap.bat")) ||
     (await checkCommand("zap-cli"));
 
-  if (config.scanners.static.enabled || config.scanners.container.enabled) {
+  if (config.scanners.static.enabled) {
     results.push(
       toolResult(
         "trivy",
@@ -91,14 +91,9 @@ async function checkScannerPrerequisites(
     );
   }
 
-  if (config.scanners.container.enabled || config.target.dockerCompose) {
+  if (config.target.dockerCompose) {
     results.push(
-      toolResult(
-        "docker",
-        hasDocker,
-        ciMode,
-        "Docker is required for container scans or Docker Compose targets"
-      )
+      toolResult("docker", hasDocker, ciMode, "Docker is required for Docker Compose targets")
     );
   }
 

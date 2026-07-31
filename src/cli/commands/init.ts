@@ -54,15 +54,12 @@ async function runWizard(options: InitOptions): Promise<void> {
 
     // 3. Which scanners
     const scannersRaw = (
-      await rl.question(
-        "3. Enable scanners [static,container,dynamic,ai] (default: static,dynamic): "
-      )
+      await rl.question("3. Enable scanners [static,dynamic,ai] (default: static,dynamic): ")
     ).trim();
     const scannerList = scannersRaw
       ? scannersRaw.split(",").map((s) => s.trim().toLowerCase())
       : ["static", "dynamic"];
     const enableStatic = scannerList.includes("static");
-    const enableContainer = scannerList.includes("container");
     const enableDynamic = scannerList.includes("dynamic");
     const enableAi = scannerList.includes("ai");
 
@@ -91,7 +88,6 @@ async function runWizard(options: InitOptions): Promise<void> {
       targetUrl,
       authBlock,
       enableStatic,
-      enableContainer,
       enableDynamic,
       enableAi,
       failOn
@@ -136,12 +132,11 @@ function buildWizardConfig(
   targetUrl: string,
   authBlock: string,
   enableStatic: boolean,
-  enableContainer: boolean,
   enableDynamic: boolean,
   enableAi: boolean,
   failOn: string
 ): string {
-  return [
+  const lines = [
     `# yaml-language-server: $schema=./security.config.schema.json`,
     `version: "1.0"`,
     ``,
@@ -154,8 +149,6 @@ function buildWizardConfig(
     `scanners:`,
     `  static:`,
     `    enabled: ${enableStatic}`,
-    `  container:`,
-    `    enabled: ${enableContainer}`,
     `  dynamic:`,
     `    enabled: ${enableDynamic}`,
     `  ai:`,
@@ -175,7 +168,8 @@ function buildWizardConfig(
     `    - markdown`,
     `  includeEvidence: true`,
     ``,
-  ].join("\n");
+  ];
+  return lines.join("\n");
 }
 
 function runInit(options: InitOptions): void {
@@ -276,13 +270,6 @@ scanners:
       severityThreshold: MEDIUM
       ignoreUnfixed: false
 
-  container:
-    enabled: false
-    images: []
-    trivy:
-      severityThreshold: MEDIUM
-      ignoreUnfixed: false
-
   dynamic:
     enabled: true
     zap:
@@ -298,6 +285,12 @@ scanners:
     deterministic: true
     # saveTests: ./security-reports/ai-tests-{role}.json
     # replayTests: ./security-reports/ai-tests-user.json
+
+# Exploit intelligence used for prioritisation. Fails open if unreachable.
+intel:
+  enabled: true
+  cacheDir: .breach-gate-cache
+  cacheTtlHours: 24
 
 thresholds:
   failOn: HIGH
