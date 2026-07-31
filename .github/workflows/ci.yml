@@ -84,18 +84,60 @@ jobs:
           done
           exit 1
 
-      # Positive control: the deliberately vulnerable demo must not come back
-      # clean. Kept, but it is no longer the only behavioural check in CI.
+      # Positive control: the deliberately vulnerable demo must come back UNSAFE
+      # with real proofs. It is no longer the only behavioural check in CI, and
+      # it is no longer treated as sufficient: the negative controls and the
+      # precision gate in the verify job are what catch false positives.
+      #
+      # This uses demo/ai-tests.json via scanners.ai.replayTests, so no model or
+      # API key is needed and the run is deterministic. Exit 1 is the expected
+      # outcome, so the step must not fail the job on it.
       - name: Run Breach Gate demo smoke scan
         run: |
+          set +e
           node dist/cli/index.js scan \
             --ci \
-            --target http://127.0.0.1:3000 \
-            --skip-static \
-            --skip-dynamic \
+            --workdir demo \
+            --config security.config.yml \
             --offline \
             --format json,markdown,sarif \
-            --output security-reports/demo
+            --output "$GITHUB_WORKSPACE/security-reports/demo"
+          code=$?
+          set -e
+          echo "breach-gate exit code: $code"
+          if [ "$code" -ge 2 ]; then
+            echo "ERROR: exit $code indicates a crash or config error, not a verdict" >&2
+            exit 1
+          fi
+
+      # The demo API is exploitable on purpose. A SAFE verdict here means the
+      # detectors stopped working, which is exactly the regression that shipped
+      # in v1 and went unnoticed.
+      - name: Assert the demo is reported as UNSAFE with proofs
+        run: |
+          report=security-reports/demo/security-report.json
+          test -f "$report" || { echo "no JSON report produced" >&2; exit 1; }
+          node -e "
+            const r = require('./' + process.argv[1]);
+            const verdict = r.verdict.status;
+            const confirmed = r.findings.filter(f => (f.proofs || []).length > 0);
+            const proofs = [...new Set(confirmed.flatMap(f => f.proofs))].sort();
+            console.log('verdict:', verdict);
+            console.log('confirmed findings:', confirmed.length);
+            console.log('proof types:', proofs.join(', ') || '(none)');
+            if (verdict !== 'UNSAFE') {
+              console.error('FAIL: expected UNSAFE, got ' + verdict);
+              process.exit(1);
+            }
+            if (confirmed.length < 3) {
+              console.error('FAIL: expected at least 3 confirmed exploits, got ' + confirmed.length);
+              process.exit(1);
+            }
+            if (confirmed.some(f => !f.proofExcerpt)) {
+              console.error('FAIL: a confirmed finding has no proof excerpt to verify');
+              process.exit(1);
+            }
+          " "$report"
 
       - name: Stop demo API
         if: always()

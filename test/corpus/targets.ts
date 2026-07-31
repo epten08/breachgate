@@ -73,6 +73,19 @@ export const CORPUS: CorpusCase[] = [
     expectedVulnerable: { statusCodes: [200] },
   },
   {
+    // Regression: extractPayloads returned the whole query string including the
+    // parameter name, so the reflection check compared against something the
+    // response could never contain and every reflected XSS was missed. Found by
+    // running the demo API; the corpus had a clean XSS case but no vulnerable
+    // one, so recall stayed at 100% while the detector was dead.
+    id: "vuln-xss-reflected",
+    vulnerable: true,
+    category: "Cross-Site Scripting (XSS)",
+    description: "Reflects the query into HTML with no encoding",
+    request: { method: "GET", path: "/vuln/echo?msg=%3Cscript%3Ealert(1)%3C%2Fscript%3E" },
+    expectedVulnerable: { statusCodes: [200] },
+  },
+  {
     id: "vuln-stacktrace",
     vulnerable: true,
     category: "Information Disclosure",
@@ -146,6 +159,30 @@ export const CORPUS: CorpusCase[] = [
     category: "Server-Side Request Forgery (SSRF)",
     description: "Rejects link-local destinations",
     request: { method: "GET", path: "/clean/fetch?url=http://169.254.169.254/latest/meta-data/" },
+    expectedVulnerable: { statusCodes: [200] },
+  },
+  {
+    // Regression: found by running the demo API, not by code review.
+    // captureBaselines strips the query string, so an endpoint that requires a
+    // parameter returns 4xx unparameterised and 2xx once parameters are given.
+    // That status change was being reported as an authorization bypass, and it
+    // fired on three unrelated demo endpoints including a plain search route.
+    id: "clean-requires-param",
+    vulnerable: false,
+    category: "Broken Access Control",
+    description: "Returns 400 without its required parameter and 200 with it",
+    request: { method: "GET", path: "/clean/requires-param?q=hello" },
+    expectedVulnerable: { statusCodes: [200] },
+  },
+  {
+    // Regression: an endpoint that legitimately returns a user record contains
+    // "role":"admin" in its response. That is not mass assignment. Proof now
+    // requires that we sent the privileged value ourselves.
+    id: "clean-returns-role",
+    vulnerable: false,
+    category: "Mass Assignment",
+    description: "Returns an existing user's role without being sent one",
+    request: { method: "GET", path: "/clean/whoami?id=admin" },
     expectedVulnerable: { statusCodes: [200] },
   },
 ];
@@ -244,6 +281,13 @@ export async function startCorpusServer(): Promise<{
           json(200, { id: 1, name: body.name ?? "anon", role: body.role ?? "user" })
         );
 
+      case "/vuln/echo": {
+        const msg = url.searchParams.get("msg");
+        if (!msg) return text(200, "<html><body><p>nothing</p></body></html>", "text/html");
+        // No encoding at all.
+        return text(200, `<html><body><p>${msg}</p></body></html>`, "text/html");
+      }
+
       case "/vuln/parse": {
         const input = url.searchParams.get("input");
         if (!input) return json(200, { parsed: null });
@@ -291,6 +335,21 @@ export async function startCorpusServer(): Promise<{
 
       case "/clean/fetch":
         return json(400, { error: "destination not allowed" });
+
+      case "/clean/requires-param": {
+        // 400 without the parameter, 200 with it. Extremely common, and not a
+        // security property of any kind.
+        const q = url.searchParams.get("q");
+        if (!q) return json(400, { error: "q is required" });
+        return json(200, { results: [], q });
+      }
+
+      case "/clean/whoami": {
+        // Legitimately returns a role field. We did not send one.
+        const id = url.searchParams.get("id");
+        if (!id) return json(404, { error: "not found" });
+        return json(200, { username: id, role: "admin", department: "platform" });
+      }
 
       default:
         return json(404, { error: "route not found" });
