@@ -1,42 +1,59 @@
-import { Finding } from "./finding.js";
+import { Finding, ExploitProof } from "./finding.js";
+import { exploitabilityFromIntel } from "../intel/exploit.intel.js";
 
 // =============================================================================
 // Attack Feasibility Analysis
 // =============================================================================
-// This module determines whether an attacker can ACTUALLY compromise the system.
-// Key distinction:
-// - Vulnerability = theoretical weakness (from static analysis, CVE databases)
-// - Confirmed Exploit = PROVEN breach capability (AI/dynamic testing succeeded)
 //
-// A confirmed exploit is not a "high-scoring finding" - it's proof of breach.
-// The system should fail immediately when exploitation is demonstrated.
+// This module answers one question: can an attacker actually compromise this
+// system right now?
+//
+// The single most important rule in this file:
+//
+//   CONFIRMED means a scanner observed positive proof of exploitation in a
+//   response. It NEVER means "this finding came from an active scanner".
+//
+// The previous implementation treated the source label as proof, so a passive
+// alert from ZAP and a header miss from an LLM test both became "confirmed
+// exploits" and blocked deploys. Confirmation now requires a Finding to carry
+// an ExploitProof that a scanner explicitly attached after seeing the evidence.
+//
+// The second rule: the feasibility formula has no floors and no bonuses. If a
+// score comes out low, that is the model telling you something. Patching the
+// output with Math.max was how the old model hid its own disagreements.
 
 export type BreachType =
-  | "remote_code_execution" // Attacker can execute arbitrary code
-  | "data_exfiltration" // Attacker can steal sensitive data
-  | "privilege_escalation" // Attacker can gain elevated access
-  | "authentication_bypass" // Attacker can bypass auth entirely
-  | "session_hijacking" // Attacker can hijack user sessions (XSS, CSRF)
-  | "none"; // No confirmed breach
+  | "remote_code_execution"
+  | "data_exfiltration"
+  | "privilege_escalation"
+  | "authentication_bypass"
+  | "session_hijacking"
+  | "none";
 
 export interface ConfirmedBreach {
   type: BreachType;
   endpoint: string;
-  capability: string; // Human-readable: "Unauthenticated remote command execution"
+  capability: string;
   finding: Finding;
   evidence: string;
+  /** The exact response substring that proves this, for fast verification. */
+  proofExcerpt?: string;
+  proofs: ExploitProof[];
 }
 
 export interface AttackVector {
   endpoint: string;
   findings: Finding[];
-  reachability: number; // 0-1: Can attacker access this?
-  exploitability: number; // 0-1: Is exploit demonstrated?
-  impact: number; // 0-1: What damage is possible?
-  confidence: number; // 0-1: How strong is evidence?
-  feasibilityScore: number; // Multiplicative: reach × exploit × impact × conf
-  attackChain?: string[]; // Potential attack sequence
-  isConfirmed: boolean; // AI/dynamic exploitation succeeded
+  reachability: number;
+  exploitability: number;
+  impact: number;
+  confidence: number;
+  /** Multiplicative: reachability x exploitability x impact x confidence */
+  feasibilityScore: number;
+  attackChain?: string[];
+  isConfirmed: boolean;
+  /** Where the exploitability number came from, for the explain view. */
+  exploitabilityBasis: "kev" | "epss" | "proof" | "category";
 }
 
 export interface EndpointCorrelation {
@@ -56,20 +73,19 @@ export interface AttackChain {
   impact: "critical" | "high" | "medium" | "low";
 }
 
-// INCONCLUSIVE = scan failed, cannot determine security status
 export type DeploymentVerdict = "SAFE" | "UNSAFE" | "REVIEW_REQUIRED" | "INCONCLUSIVE";
 
 export interface SecurityVerdict {
   verdict: DeploymentVerdict;
   reason: string;
-  breaches: ConfirmedBreach[]; // Proven attack capabilities
-  operationalConclusion: string; // E.g., "Unauthenticated RCE is possible"
-  criticalFindings: Finding[]; // High-risk but unconfirmed
-  confirmedExploits: Finding[]; // Backward compat - findings that were exploited
+  breaches: ConfirmedBreach[];
+  operationalConclusion: string;
+  criticalFindings: Finding[];
+  confirmedExploits: Finding[];
   attackChains: AttackChain[];
   recommendations: ContextualRemediation[];
-  scanIncomplete?: boolean; // True if scanners failed
-  failedScanners?: string[]; // Which scanners failed
+  scanIncomplete?: boolean;
+  failedScanners?: string[];
 }
 
 export interface ContextualRemediation {
@@ -81,61 +97,82 @@ export interface ContextualRemediation {
 }
 
 // =============================================================================
+// Thresholds
+// =============================================================================
+
+/**
+ * Feasibility at or above this, without proof, means a human should look.
+ * Deliberately not a deploy blocker: unproven findings do not block.
+ */
+export const REVIEW_THRESHOLD = 0.35;
+
+// =============================================================================
 // Impact Scores by Category
+//
+// "If this were exploited, how bad is it?" Impact is a property of the
+// vulnerability class, so a lookup table is the honest representation. It is
+// exploitability, not impact, that must come from real-world data.
 // =============================================================================
 
 const IMPACT_SCORES: Record<string, number> = {
-  // Critical - Full system compromise
+  // Full system compromise
   "Remote Code Execution": 1.0,
   "Command Injection": 1.0,
   "Code Injection": 0.95,
   "SQL Injection": 0.95,
 
-  // High - Significant data/access compromise
-  "Exposed Secret": 0.9,       // Direct credential leak — highly likely to be exploited
-  "Hardcoded Secret": 0.88,
+  // Significant data or access compromise
   "Path Traversal": 0.85,
   "Broken Access Control": 0.85,
   "Broken Authentication": 0.85,
+  "Broken Authentication (JWT)": 0.9,
+  "Server-Side Request Forgery (SSRF)": 0.8,
   "Sensitive Data Exposure": 0.8,
-  "Insecure Token Storage": 0.8,  // Token in localStorage readable by XSS
+  "Mass Assignment": 0.75,
   "Cross-Site Scripting (XSS)": 0.75,
   XSS: 0.75,
 
-  // Medium - Limited compromise
+  // Limited compromise
   CSRF: 0.6,
-  "Insecure Communication": 0.6,  // http:// in production
   "Information Disclosure": 0.5,
-  "Security Misconfiguration": 0.45,
-  "Cross-Origin Communication": 0.5,  // postMessage wildcard
   "Dependency Vulnerability": 0.5,
-  "Container Vulnerability": 0.45,
+  "OS Package Vulnerability": 0.45,
+  "Security Misconfiguration": 0.3,
 
-  // Lower - Code quality / build health
-  "Missing Security Header": 0.25,
+  // Defence in depth only. Not exploitable on their own, and scoring them
+  // higher than this is what made header checks look like breaches.
+  "Missing Security Header": 0.15,
   "TLS/SSL Issue": 0.35,
-  "Type Safety": 0.25,
-  "Code Quality": 0.2,
-  "Build Failure": 0.3,
 };
 
-// Sources that produce static frontend findings — scored differently from live API testing
-const FRONTEND_SOURCES = new Set([
-  "Gitleaks",
-  "Semgrep Frontend",
-  "OSV Scanner",
-  "npm audit",
-  "Project Health",
-]);
-
-// Minimum feasibility floor per severity for frontend static findings.
-// Prevents the multiplicative formula from collapsing CRITICAL issues into "safe".
-const FRONTEND_SEVERITY_FLOOR: Record<string, number> = {
-  CRITICAL: 0.75, // Forces into criticalFindings → UNSAFE for high-impact categories
-  HIGH: 0.65,     // UNSAFE territory
-  MEDIUM: 0.38,   // REVIEW_REQUIRED territory
-  LOW: 0.15,      // SAFE territory
+/**
+ * Exploitability when we have neither exploit intelligence nor proof.
+ *
+ * These are deliberately low. An unproven finding on a running API is a
+ * hypothesis, and the scoring model should say so rather than assume the
+ * worst. Findings that matter will be confirmed by proof or by KEV/EPSS.
+ */
+const UNPROVEN_EXPLOITABILITY: Record<string, number> = {
+  "Remote Code Execution": 0.5,
+  "Command Injection": 0.5,
+  "SQL Injection": 0.5,
+  "Path Traversal": 0.45,
+  "Broken Access Control": 0.4,
+  "Broken Authentication": 0.4,
+  "Server-Side Request Forgery (SSRF)": 0.4,
+  "Cross-Site Scripting (XSS)": 0.35,
+  XSS: 0.35,
+  "Mass Assignment": 0.35,
+  CSRF: 0.25,
+  "Information Disclosure": 0.25,
+  "Security Misconfiguration": 0.15,
+  "Missing Security Header": 0.1,
 };
+
+const DEFAULT_UNPROVEN_EXPLOITABILITY = 0.3;
+
+/** Exploitability when a scanner observed real proof of exploitation. */
+const PROVEN_EXPLOITABILITY = 0.95;
 
 // =============================================================================
 // Attack Analyzer
@@ -143,12 +180,11 @@ const FRONTEND_SEVERITY_FLOOR: Record<string, number> = {
 
 export class AttackAnalyzer {
   /**
-   * Correlate findings by endpoint to understand attack surface
+   * Group findings by endpoint so multi-finding attack surfaces are visible.
    */
   correlateByEndpoint(findings: Finding[]): EndpointCorrelation[] {
     const byEndpoint = new Map<string, Finding[]>();
 
-    // Group findings by normalized endpoint
     for (const finding of findings) {
       const key = this.normalizeEndpoint(finding.endpoint);
       const existing = byEndpoint.get(key) || [];
@@ -156,15 +192,13 @@ export class AttackAnalyzer {
       byEndpoint.set(key, existing);
     }
 
-    // Create correlations with attack analysis
     const correlations: EndpointCorrelation[] = [];
 
-    for (const [endpoint, endpointFindings] of byEndpoint) {
+    for (const [endpoint, endpointFindings] of byEndpoint.entries()) {
       const attackVectors = endpointFindings.map((f) => this.analyzeAttackVector(f));
       const attackChains = this.identifyAttackChains(endpointFindings);
       const combinedRisk = this.calculateCombinedRisk(attackVectors);
 
-      // Parse endpoint parts
       const parts = endpoint.split(" ");
       const method = parts.length > 1 ? parts[0] : undefined;
       const path = parts.length > 1 ? parts[1] : endpoint;
@@ -180,34 +214,24 @@ export class AttackAnalyzer {
       });
     }
 
-    // Sort by combined risk
     return correlations.sort((a, b) => b.combinedRisk - a.combinedRisk);
   }
 
   /**
-   * Analyze a single finding as an attack vector (public for --explain-verdict)
+   * Score a single finding as an attack vector.
+   *
+   * feasibility = reachability x exploitability x impact x confidence
+   *
+   * No floors. No bonuses. If you disagree with a score, fix a factor.
    */
   analyzeAttackVector(finding: Finding): AttackVector {
     const reachability = this.calculateReachability(finding);
-    const exploitability = this.calculateExploitability(finding);
+    const { value: exploitability, basis } = this.calculateExploitability(finding);
     const impact = this.calculateImpact(finding);
-    const confidence = this.calculateConfidence(finding);
+    const confidence = finding.confidence;
     const isConfirmed = this.isExploitConfirmed(finding);
 
-    // Multiplicative score — all factors must be present for high risk
-    let feasibilityScore = reachability * exploitability * impact * confidence;
-
-    // Confirmed exploits get boosted to ensure they're prioritized
-    if (isConfirmed) {
-      feasibilityScore = Math.max(feasibilityScore, 0.8);
-    }
-
-    // Frontend static findings: apply a severity floor so the multiplicative formula
-    // can't collapse a CRITICAL secret exposure into "safe" territory
-    if (this.isFrontendFinding(finding)) {
-      const floor = FRONTEND_SEVERITY_FLOOR[finding.severity] ?? 0.15;
-      feasibilityScore = Math.max(feasibilityScore, floor);
-    }
+    const feasibilityScore = reachability * exploitability * impact * confidence;
 
     return {
       endpoint: finding.endpoint || "unknown",
@@ -218,122 +242,88 @@ export class AttackAnalyzer {
       confidence,
       feasibilityScore: Math.round(feasibilityScore * 100) / 100,
       isConfirmed,
+      exploitabilityBasis: basis,
       attackChain: this.getAttackChainForFinding(finding),
     };
   }
 
-  private isFrontendFinding(finding: Finding): boolean {
-    return finding.sources.some((s) => FRONTEND_SOURCES.has(s));
-  }
-
   /**
-   * Calculate reachability - can an attacker access this?
+   * Can an attacker reach this?
+   *
+   * This is a path and auth heuristic, not call-graph reachability analysis.
+   * It is named honestly in the docs and should not be described as more.
    */
   private calculateReachability(finding: Finding): number {
-    // Frontend code is shipped to browsers — inherently reachable by users and attackers
-    if (this.isFrontendFinding(finding)) {
-      // Secrets in source are reachable once the bundle is served or the repo is accessed
-      if (finding.category === "Exposed Secret" || finding.category === "Hardcoded Secret") {
-        return 0.95;
-      }
-      return 0.85; // Other frontend patterns (XSS, insecure storage, etc.)
-    }
-
-    const ctx = finding.endpointContext;
-
-    // No endpoint = likely internal/static finding
+    // No endpoint means a repository-level finding: real, but not directly
+    // addressable over the network.
     if (!finding.endpoint) {
       return 0.4;
     }
 
-    let score = 0.7; // Base score for any endpoint
+    let score = 0.7;
+    const ctx = finding.endpointContext;
 
     if (ctx) {
       if (!ctx.requiresAuth) score += 0.2;
       if (ctx.acceptsUserInput) score += 0.1;
     }
 
-    if (finding.endpoint.includes("/api/")) score += 0.1;
-    if (finding.endpoint.includes("/admin") || finding.endpoint.includes("/internal")) score -= 0.2;
+    if (finding.endpoint.includes("/admin") || finding.endpoint.includes("/internal")) {
+      score -= 0.2;
+    }
 
     return Math.min(Math.max(score, 0), 1);
   }
 
   /**
-   * Calculate exploitability - is exploitation demonstrated?
+   * How likely is exploitation?
+   *
+   * Priority order, best evidence first:
+   *   1. CISA KEV       - confirmed exploitation in the wild
+   *   2. Proof          - we exploited it ourselves during this scan
+   *   3. EPSS           - modelled 30-day exploitation probability
+   *   4. Category table - a guess, and treated as one
    */
-  private calculateExploitability(finding: Finding): number {
-    // Exposed secrets require zero exploitation skill — the credential IS the exploit
-    if (
-      finding.sources.includes("Gitleaks") &&
-      (finding.category === "Exposed Secret" || finding.category === "Hardcoded Secret")
-    ) {
-      return 0.92;
+  private calculateExploitability(finding: Finding): {
+    value: number;
+    basis: AttackVector["exploitabilityBasis"];
+  } {
+    if (finding.knownExploited) {
+      return { value: exploitabilityFromIntel(finding) ?? 0.95, basis: "kev" };
     }
 
-    // Semgrep frontend patterns are exploitable code paths (not just hypothetical)
-    if (finding.sources.includes("Semgrep Frontend")) {
-      return 0.72;
+    if (this.isExploitConfirmed(finding)) {
+      return { value: PROVEN_EXPLOITABILITY, basis: "proof" };
     }
 
-    // Dependency CVEs have public exploits in many cases
-    if (
-      (finding.sources.includes("OSV Scanner") || finding.sources.includes("npm audit")) &&
-      finding.cve
-    ) {
-      return 0.75;
+    const intel = exploitabilityFromIntel(finding);
+    if (intel !== undefined) {
+      return { value: intel, basis: "epss" };
     }
 
-    // Known dependency vulnerability without a CVE
-    if (finding.sources.includes("OSV Scanner") || finding.sources.includes("npm audit")) {
-      return 0.65;
+    return { value: this.categoryExploitability(finding.category), basis: "category" };
+  }
+
+  private categoryExploitability(category: string): number {
+    if (UNPROVEN_EXPLOITABILITY[category] !== undefined) {
+      return UNPROVEN_EXPLOITABILITY[category];
     }
 
-    let score = 0.5; // Base score
-
-    // AI-confirmed exploitation is strongest signal
-    if (finding.sources.includes("AI Security Tester")) {
-      score = 0.85;
-      if (finding.evidence) {
-        const evidence = finding.evidence.toLowerCase();
-        if (
-          evidence.includes("response status: 200") ||
-          evidence.includes("matched:") ||
-          evidence.includes("vulnerable")
-        ) {
-          score = 0.95;
-        }
+    const lower = category.toLowerCase();
+    for (const [key, value] of Object.entries(UNPROVEN_EXPLOITABILITY)) {
+      if (lower.includes(key.toLowerCase()) || key.toLowerCase().includes(lower)) {
+        return value;
       }
     }
 
-    // ZAP dynamic testing demonstrates exploitability
-    if (finding.sources.includes("OWASP ZAP API")) {
-      score = Math.max(score, 0.75);
-    }
-
-    // CVE with known exploits
-    if (finding.cve) {
-      score = Math.max(score, 0.7);
-    }
-
-    // Static findings are theoretical
-    if (finding.sources.includes("Trivy Static") || finding.sources.includes("Trivy Image")) {
-      score = Math.min(score, 0.5);
-    }
-
-    return score;
+    return DEFAULT_UNPROVEN_EXPLOITABILITY;
   }
 
-  /**
-   * Calculate impact - what can attacker do?
-   */
   private calculateImpact(finding: Finding): number {
-    // Direct category match
-    if (IMPACT_SCORES[finding.category]) {
+    if (IMPACT_SCORES[finding.category] !== undefined) {
       return IMPACT_SCORES[finding.category];
     }
 
-    // Partial match
     const category = finding.category.toLowerCase();
     for (const [key, value] of Object.entries(IMPACT_SCORES)) {
       if (category.includes(key.toLowerCase()) || key.toLowerCase().includes(category)) {
@@ -341,77 +331,35 @@ export class AttackAnalyzer {
       }
     }
 
-    // Check for high-impact keywords in description
-    const text = (finding.title + finding.category).toLowerCase();
-    if (text.includes("command") || text.includes("rce") || text.includes("execute")) {
-      return 1.0;
-    }
-    if (text.includes("sql") || text.includes("injection")) {
-      return 0.95;
-    }
-    if (text.includes("auth") || text.includes("access") || text.includes("bypass")) {
-      return 0.85;
-    }
-
-    return 0.5; // Default moderate impact
+    return 0.5;
   }
 
   /**
-   * Calculate confidence - how strong is the evidence?
+   * Was exploitation actually demonstrated?
+   *
+   * The entire answer is: did a scanner attach positive proof? Scanner
+   * identity, evidence string shape, and severity label are all irrelevant
+   * here, and treating any of them as proof is what produced fabricated
+   * breach reports.
    */
-  private calculateConfidence(finding: Finding): number {
-    let score = finding.confidence; // Use existing confidence
-
-    // Multiple sources increase confidence
-    if (finding.sources.length > 1) {
-      score = Math.min(score + 0.15, 1.0);
-    }
-
-    // Deduplicated findings are more reliable
-    if (finding.deduplicated && finding.duplicateCount > 0) {
-      score = Math.min(score + finding.duplicateCount * 0.05, 1.0);
-    }
-
-    // Strong evidence boosts confidence
-    if (finding.evidence && finding.evidence.length > 100) {
-      score = Math.min(score + 0.1, 1.0);
-    }
-
-    return score;
+  isExploitConfirmed(finding: Finding): boolean {
+    return finding.proofs.length > 0;
   }
 
   /**
-   * Check if exploitation was confirmed (not just detected)
-   */
-  private isExploitConfirmed(finding: Finding): boolean {
-    // AI successfully exploited
-    if (finding.sources.includes("AI Security Tester")) {
-      if (finding.evidence) {
-        const evidence = finding.evidence.toLowerCase();
-        return (
-          evidence.includes("response status:") &&
-          (evidence.includes("matched:") || evidence.includes("vulnerable"))
-        );
-      }
-      return true; // AI findings are from successful tests
-    }
-
-    // ZAP active scan confirmed
-    if (finding.sources.includes("OWASP ZAP API")) {
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Identify potential attack chains from correlated findings
+   * Identify multi-step attack paths across findings on the same endpoint.
+   * Only proven findings can participate: a chain built from two hypotheses
+   * is a story, not a threat.
    */
   private identifyAttackChains(findings: Finding[]): AttackChain[] {
     const chains: AttackChain[] = [];
-    const categories = findings.map((f) => f.category.toLowerCase());
+    const confirmed = findings.filter((f) => this.isExploitConfirmed(f));
+    if (confirmed.length === 0) {
+      return chains;
+    }
 
-    // Auth bypass → Data access chain
+    const categories = confirmed.map((f) => f.category.toLowerCase());
+
     if (
       categories.some((c) => c.includes("auth") || c.includes("access")) &&
       categories.some(
@@ -419,92 +367,20 @@ export class AttackAnalyzer {
       )
     ) {
       chains.push({
-        name: "Authentication Bypass → Data Exfiltration",
+        name: "Authentication Bypass to Data Exfiltration",
         steps: [
-          "Bypass authentication/authorization",
+          "Bypass authentication or authorization",
           "Access sensitive data endpoints",
-          "Exfiltrate user/system data",
+          "Exfiltrate user or system data",
         ],
         likelihood: "high",
         impact: "critical",
       });
     }
 
-    // Injection → RCE chain
-    if (categories.some((c) => c.includes("injection") || c.includes("sql"))) {
-      chains.push({
-        name: "Injection → System Compromise",
-        steps: [
-          "Inject malicious payload",
-          "Execute arbitrary commands",
-          "Establish persistence/exfiltrate data",
-        ],
-        likelihood: "high",
-        impact: "critical",
-      });
-    }
-
-    // IDOR → Data breach chain
-    if (categories.some((c) => c.includes("access") || c.includes("idor"))) {
-      chains.push({
-        name: "IDOR → Data Breach",
-        steps: [
-          "Enumerate resource IDs",
-          "Access unauthorized resources",
-          "Collect sensitive information",
-        ],
-        likelihood: "high",
-        impact: "high",
-      });
-    }
-
-    // XSS + localStorage tokens → full account takeover
-    if (
-      categories.some((c) => c.includes("xss") || c.includes("script") || c.includes("dangerous"))
-    ) {
-      if (categories.some((c) => c.includes("storage") || c.includes("token"))) {
-        chains.push({
-          name: "XSS → Token Theft → Account Takeover",
-          steps: [
-            "Exploit dangerouslySetInnerHTML or innerHTML to inject script",
-            "Read auth token from localStorage (no httpOnly protection)",
-            "Replay token to impersonate the victim",
-          ],
-          likelihood: "high",
-          impact: "critical",
-        });
-      } else {
-        chains.push({
-          name: "XSS → Session Hijacking",
-          steps: [
-            "Inject malicious script",
-            "Steal session cookies",
-            "Impersonate legitimate users",
-          ],
-          likelihood: "medium",
-          impact: "high",
-        });
-      }
-    }
-
-    // Exposed secret → direct API compromise
-    if (categories.some((c) => c.includes("secret") || c.includes("exposed"))) {
-      chains.push({
-        name: "Exposed Credential → Direct API Compromise",
-        steps: [
-          "Extract hardcoded API key from source bundle or repository",
-          "Authenticate directly to third-party service (Stripe, Firebase, etc.)",
-          "Access or exfiltrate data without user interaction",
-        ],
-        likelihood: "high",
-        impact: "critical",
-      });
-    }
-
-    // Command injection → Full compromise
     if (categories.some((c) => c.includes("command") || c.includes("execute"))) {
       chains.push({
-        name: "Command Injection → Full System Compromise",
+        name: "Command Injection to Full System Compromise",
         steps: [
           "Inject shell commands",
           "Execute with server privileges",
@@ -513,62 +389,81 @@ export class AttackAnalyzer {
         likelihood: "high",
         impact: "critical",
       });
+    } else if (categories.some((c) => c.includes("injection") || c.includes("sql"))) {
+      chains.push({
+        name: "Injection to System Compromise",
+        steps: [
+          "Inject malicious payload",
+          "Read or modify database contents",
+          "Extract credentials and escalate",
+        ],
+        likelihood: "high",
+        impact: "critical",
+      });
+    }
+
+    if (categories.some((c) => c.includes("idor") || c.includes("access"))) {
+      chains.push({
+        name: "IDOR to Data Breach",
+        steps: [
+          "Enumerate resource identifiers",
+          "Access unauthorized resources",
+          "Collect sensitive information",
+        ],
+        likelihood: "high",
+        impact: "high",
+      });
+    }
+
+    if (categories.some((c) => c.includes("xss") || c.includes("cross-site scripting"))) {
+      chains.push({
+        name: "XSS to Session Hijacking",
+        steps: ["Inject script payload", "Steal session credentials", "Impersonate the victim"],
+        likelihood: "medium",
+        impact: "high",
+      });
     }
 
     return chains;
   }
 
-  /**
-   * Get attack chain description for a single finding
-   */
   private getAttackChainForFinding(finding: Finding): string[] | undefined {
+    if (!this.isExploitConfirmed(finding)) {
+      return undefined;
+    }
+
     const category = finding.category.toLowerCase();
 
-    if (category.includes("sql injection")) {
-      return ["Inject SQL payload", "Dump database", "Extract credentials"];
+    if (category.includes("sql")) {
+      return ["Inject SQL payload", "Read database contents", "Extract credentials"];
     }
-    if (category.includes("command")) {
-      return ["Inject command", "Execute on server", "Establish backdoor"];
+    if (category.includes("command") || category.includes("execute")) {
+      return ["Inject command", "Execute on server", "Establish persistence"];
+    }
+    if (category.includes("ssrf") || category.includes("server-side request")) {
+      return ["Supply internal URL", "Reach instance metadata", "Steal cloud credentials"];
     }
     if (category.includes("xss") || category.includes("cross-site scripting")) {
-      return ["Inject script via dangerouslySetInnerHTML / innerHTML", "Steal localStorage token", "Replay token to take over account"];
+      return ["Inject script", "Steal session credentials", "Impersonate victim"];
     }
-    if (category.includes("exposed secret") || category.includes("hardcoded secret")) {
-      return ["Extract key from source bundle / repo", "Authenticate to third-party API", "Exfiltrate data or perform actions as the app"];
-    }
-    if (category.includes("insecure token") || category.includes("insecure storage")) {
-      return ["Trigger XSS on the page", "Read localStorage auth token", "Replay token to impersonate victim"];
-    }
-    if (category.includes("path traversal")) {
+    if (category.includes("path") || category.includes("traversal")) {
       return ["Traverse directories", "Read sensitive files", "Extract secrets"];
     }
     if (category.includes("auth") || category.includes("access")) {
-      return ["Bypass auth", "Access restricted data", "Elevate privileges"];
+      return ["Bypass authorization", "Access restricted data", "Escalate privileges"];
     }
 
     return undefined;
   }
 
-  /**
-   * Calculate combined risk for an endpoint
-   */
   private calculateCombinedRisk(vectors: AttackVector[]): number {
     if (vectors.length === 0) return 0;
-
-    // Take the highest feasibility score
-    const maxFeasibility = Math.max(...vectors.map((v) => v.feasibilityScore));
-
-    // Boost if multiple attack vectors exist
-    const vectorBonus = Math.min((vectors.length - 1) * 0.05, 0.15);
-
-    // Boost if any exploit is confirmed
-    const confirmedBonus = vectors.some((v) => v.isConfirmed) ? 0.1 : 0;
-
-    return Math.min(maxFeasibility + vectorBonus + confirmedBonus, 1.0);
+    return Math.max(...vectors.map((v) => v.feasibilityScore));
   }
 
   /**
-   * Analyze confirmed breaches - not vulnerabilities, but proven attack capabilities
+   * A breach is a proven attack capability, expressed in operational terms.
+   * Only confirmed findings can produce one.
    */
   private analyzeBreaches(findings: Finding[]): ConfirmedBreach[] {
     const breaches: ConfirmedBreach[] = [];
@@ -585,116 +480,111 @@ export class AttackAnalyzer {
     return breaches;
   }
 
-  /**
-   * Classify a confirmed exploit into a breach type with operational meaning
-   */
   private classifyBreach(finding: Finding): ConfirmedBreach {
     const category = finding.category.toLowerCase();
     const endpoint = finding.endpoint || "application";
     const ctx = finding.endpointContext;
     const isUnauthenticated = !ctx?.requiresAuth;
     const authPrefix = isUnauthenticated ? "Unauthenticated " : "";
+    const base = {
+      endpoint,
+      finding,
+      evidence: finding.evidence,
+      proofExcerpt: finding.proofExcerpt,
+      proofs: finding.proofs,
+    };
 
-    // Command Injection / RCE
     if (category.includes("command") || category.includes("rce") || category.includes("execute")) {
       return {
+        ...base,
         type: "remote_code_execution",
-        endpoint,
         capability: `${authPrefix}remote command execution on ${endpoint}`,
-        finding,
-        evidence: finding.evidence,
       };
     }
 
-    // SQL Injection
     if (category.includes("sql") || category.includes("injection")) {
       return {
+        ...base,
         type: "data_exfiltration",
-        endpoint,
         capability: `${authPrefix}database access via SQL injection on ${endpoint}`,
-        finding,
-        evidence: finding.evidence,
       };
     }
 
-    // Path Traversal / File Read
-    if (category.includes("path") || category.includes("traversal") || category.includes("file")) {
+    if (category.includes("ssrf") || category.includes("server-side request")) {
       return {
+        ...base,
         type: "data_exfiltration",
-        endpoint,
-        capability: `${authPrefix}arbitrary file read via ${endpoint}`,
-        finding,
-        evidence: finding.evidence,
+        capability: `${authPrefix}server-side request forgery reaching internal services from ${endpoint}`,
       };
     }
 
-    // Authentication Bypass
+    if (category.includes("path") || category.includes("traversal")) {
+      return {
+        ...base,
+        type: "data_exfiltration",
+        capability: `${authPrefix}arbitrary file read via ${endpoint}`,
+      };
+    }
+
     if (category.includes("auth") && (category.includes("bypass") || category.includes("broken"))) {
       return {
+        ...base,
         type: "authentication_bypass",
-        endpoint,
         capability: `Authentication bypass on ${endpoint}`,
-        finding,
-        evidence: finding.evidence,
       };
     }
 
-    // Access Control / IDOR
+    if (category.includes("mass assignment")) {
+      return {
+        ...base,
+        type: "privilege_escalation",
+        capability: `Privilege escalation via mass assignment on ${endpoint}`,
+      };
+    }
+
     if (category.includes("access") || category.includes("idor")) {
       return {
+        ...base,
         type: "privilege_escalation",
-        endpoint,
         capability: `Unauthorized data access via ${endpoint}`,
-        finding,
-        evidence: finding.evidence,
       };
     }
 
-    // Sensitive Data Exposure (if confirmed by dynamic testing)
+    if (
+      category.includes("xss") ||
+      category.includes("cross-site scripting") ||
+      category.includes("csrf")
+    ) {
+      return {
+        ...base,
+        type: "session_hijacking",
+        capability: `${authPrefix}client-side script injection on ${endpoint} enabling session hijacking`,
+      };
+    }
+
     if (
       category.includes("sensitive") ||
       category.includes("exposure") ||
       category.includes("disclosure")
     ) {
       return {
+        ...base,
         type: "data_exfiltration",
-        endpoint,
         capability: `Sensitive data leak from ${endpoint}`,
-        finding,
-        evidence: finding.evidence,
       };
     }
 
-    // XSS / CSRF / client-side injection
-    if (
-      category.includes("xss") ||
-      category.includes("cross-site scripting") ||
-      category.includes("csrf") ||
-      category.includes("cross-site request") ||
-      category.includes("script injection")
-    ) {
-      return {
-        type: "session_hijacking",
-        endpoint,
-        capability: `${authPrefix}client-side script injection on ${endpoint} enabling session hijacking`,
-        finding,
-        evidence: finding.evidence,
-      };
-    }
-
-    return { type: "none", endpoint, capability: "", finding, evidence: "" };
+    return { ...base, type: "none", capability: "", evidence: "" };
   }
 
   /**
-   * Generate deployment verdict with scan status awareness
-   * CRITICAL: If scanners failed, verdict is INCONCLUSIVE (not SAFE)
+   * Generate a deployment verdict with scan status awareness.
+   * A failed scan is never a passing scan.
    */
   generateVerdictWithStatus(
     findings: Finding[],
     scanStatus: { isComplete: boolean; failedScanners: string[]; allScannersFailed?: boolean }
   ): SecurityVerdict {
-    // SCAN FAILED ≠ NO VULNERABILITIES
-    // We cannot claim safety if we didn't complete the scan.
     const incompleteWithFailures = !scanStatus.isComplete && scanStatus.failedScanners.length > 0;
     const noScannerCompleted = scanStatus.allScannersFailed === true;
 
@@ -717,95 +607,75 @@ export class AttackAnalyzer {
       };
     }
 
-    // Otherwise, use normal verdict logic
     return this.generateVerdict(findings);
   }
 
   /**
-   * Generate deployment verdict - based on attacker capability, not vulnerability counts
+   * The deploy gate.
+   *
+   *   UNSAFE          - exploitation was proven. Block.
+   *   REVIEW_REQUIRED - plausible but unproven. Do not block, do surface.
+   *   SAFE            - nothing proven, nothing above the review threshold.
+   *
+   * Nothing except positive proof produces UNSAFE. An unproven finding, no
+   * matter how scary its category label, cannot block a deploy. That is the
+   * whole point of a gate that developers will keep switched on.
    */
   generateVerdict(findings: Finding[]): SecurityVerdict {
     const correlations = this.correlateByEndpoint(findings);
-
-    // STEP 1: Identify confirmed breaches (proof of attack success)
     const breaches = this.analyzeBreaches(findings);
     const confirmedExploits = findings.filter((f) => this.isExploitConfirmed(f));
 
-    // STEP 2: Determine operational conclusion
     let operationalConclusion = "";
     if (breaches.length > 0) {
-      // Prioritize by severity
-      const rce = breaches.find((b) => b.type === "remote_code_execution");
-      const dataLeak = breaches.find((b) => b.type === "data_exfiltration");
-      const authBypass = breaches.find((b) => b.type === "authentication_bypass");
-      const privEsc = breaches.find((b) => b.type === "privilege_escalation");
-      const sessionHijack = breaches.find((b) => b.type === "session_hijacking");
-
-      if (rce) {
-        operationalConclusion = rce.capability;
-      } else if (dataLeak) {
-        operationalConclusion = dataLeak.capability;
-      } else if (authBypass) {
-        operationalConclusion = authBypass.capability;
-      } else if (privEsc) {
-        operationalConclusion = privEsc.capability;
-      } else if (sessionHijack) {
-        operationalConclusion = sessionHijack.capability;
-      } else {
-        operationalConclusion = breaches[0].capability;
-      }
+      const priority: BreachType[] = [
+        "remote_code_execution",
+        "data_exfiltration",
+        "authentication_bypass",
+        "privilege_escalation",
+        "session_hijacking",
+      ];
+      const ranked = priority
+        .map((type) => breaches.find((b) => b.type === type))
+        .filter((b): b is ConfirmedBreach => !!b);
+      operationalConclusion = (ranked[0] ?? breaches[0]).capability;
     }
 
-    // STEP 3: Identify unconfirmed but high-risk findings (supporting evidence)
-    const criticalFindings = findings.filter((f) => {
-      if (this.isExploitConfirmed(f)) return false; // Already in breaches
-      const vector = this.analyzeAttackVector(f);
-      return vector.feasibilityScore >= 0.6;
+    // Unproven findings worth a human look.
+    const reviewFindings = findings.filter((f) => {
+      if (this.isExploitConfirmed(f)) return false;
+      return this.analyzeAttackVector(f).feasibilityScore >= REVIEW_THRESHOLD;
     });
 
-    // Collect attack chains
     const allChains: AttackChain[] = [];
     for (const corr of correlations) {
       allChains.push(...corr.attackChains);
     }
 
-    // Generate remediations - prioritize breaches
-    const prioritizedFindings = [...confirmedExploits, ...criticalFindings];
-    const recommendations = this.generateContextualRemediations(prioritizedFindings);
+    const recommendations = this.generateContextualRemediations([
+      ...confirmedExploits,
+      ...reviewFindings,
+    ]);
 
-    // STEP 4: Determine verdict based on attacker capability
     let verdict: DeploymentVerdict;
     let reason: string;
 
     if (breaches.length > 0) {
-      // Confirmed breach = FAIL. Not a high score, but proof of compromise.
       verdict = "UNSAFE";
       reason = operationalConclusion;
     } else if (confirmedExploits.length > 0) {
-      // Confirmed exploit that didn't classify into a named breach type — still UNSAFE.
       verdict = "UNSAFE";
       const types = [...new Set(confirmedExploits.map((f) => f.category))];
-      reason = `Confirmed exploitation: ${types.slice(0, 2).join(", ")}. Active attacks succeeded during testing.`;
-    } else if (criticalFindings.some((f) => this.calculateImpact(f) >= 0.9)) {
-      // Unconfirmed but high-impact (RCE-level) - still unsafe
-      verdict = "UNSAFE";
-      const types = [
-        ...new Set(
-          criticalFindings.filter((f) => this.calculateImpact(f) >= 0.9).map((f) => f.category)
-        ),
-      ];
-      reason = `Critical vulnerability class detected: ${types.slice(0, 2).join(", ")}. Exploitation likely.`;
-    } else if (criticalFindings.length > 0) {
-      // Moderate risk - needs human review
+      reason = `Exploitation confirmed against ${types.slice(0, 2).join(", ")}.`;
+    } else if (reviewFindings.length > 0) {
       verdict = "REVIEW_REQUIRED";
-      reason = `${criticalFindings.length} exploitable vulnerabilities detected. Security review required.`;
+      reason = `${reviewFindings.length} unconfirmed finding(s) above the review threshold. No exploitation was demonstrated.`;
     } else if (findings.length > 0) {
-      // Low-risk only - informational
       verdict = "SAFE";
-      reason = `${findings.length} low-risk findings. No exploitable vulnerabilities detected.`;
+      reason = `${findings.length} low-risk finding(s). No exploitation demonstrated and nothing above the review threshold.`;
     } else {
       verdict = "SAFE";
-      reason = "No security vulnerabilities detected.";
+      reason = "No security findings.";
     }
 
     return {
@@ -813,16 +683,13 @@ export class AttackAnalyzer {
       reason,
       breaches,
       operationalConclusion,
-      criticalFindings,
+      criticalFindings: reviewFindings,
       confirmedExploits,
       attackChains: allChains,
       recommendations,
     };
   }
 
-  /**
-   * Generate contextual, specific remediation suggestions
-   */
   private generateContextualRemediations(findings: Finding[]): ContextualRemediation[] {
     return findings.slice(0, 10).map((finding) => {
       const specific = this.getSpecificRemediation(finding);
@@ -836,62 +703,10 @@ export class AttackAnalyzer {
     });
   }
 
-  /**
-   * Get specific remediation based on finding context
-   */
   private getSpecificRemediation(finding: Finding): { fix: string; code?: string } {
     const category = finding.category.toLowerCase();
     const endpoint = finding.endpoint || "";
 
-    // Exposed / hardcoded secret
-    if (category.includes("exposed secret") || category.includes("hardcoded secret")) {
-      return {
-        fix: `Rotate the exposed credential immediately, then move it to an environment variable. Never commit secrets to source control.`,
-        code: `// Remove from code:\n// const apiKey = 'sk_live_...'   ← delete this\n\n// Use environment variable instead:\nconst apiKey = import.meta.env.VITE_API_KEY  // or process.env.API_KEY\n\n// Add to .gitignore:\necho ".env" >> .gitignore`,
-      };
-    }
-
-    // Insecure token storage
-    if (category.includes("insecure token") || category.includes("insecure storage")) {
-      return {
-        fix: `Move auth tokens from localStorage to an httpOnly cookie set by the server. localStorage is readable by any XSS payload on the page.`,
-        code: `// Server sets token as httpOnly cookie (Express example):\nres.cookie('token', jwt, {\n  httpOnly: true,   // not accessible via JS\n  secure: true,     // HTTPS only\n  sameSite: 'strict'\n});\n\n// Remove from client:\n// localStorage.setItem('token', ...)  ← delete this`,
-      };
-    }
-
-    // dangerouslySetInnerHTML / innerHTML XSS
-    if (category.includes("cross-site scripting") || category.includes("xss")) {
-      return {
-        fix: `Sanitize HTML with DOMPurify before rendering, or avoid dangerouslySetInnerHTML entirely and use text-only React APIs.`,
-        code: `// Instead of (dangerous):\n<div dangerouslySetInnerHTML={{ __html: userContent }} />\n\n// Use DOMPurify:\nimport DOMPurify from 'dompurify';\n<div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(userContent) }} />\n\n// Or avoid HTML altogether:\n<div>{userContent}</div>  // React escapes text automatically`,
-      };
-    }
-
-    // Insecure HTTP
-    if (category.includes("insecure communication")) {
-      return {
-        fix: `Replace http:// with https:// in all API base URLs. Use relative paths where possible so the protocol is inherited from the page.`,
-        code: `// Instead of:\nconst BASE_URL = 'http://api.example.com'\n\n// Use:\nconst BASE_URL = 'https://api.example.com'\n// or relative:\nconst BASE_URL = '/api'  // inherits protocol`,
-      };
-    }
-
-    // postMessage wildcard
-    if (category.includes("cross-origin")) {
-      return {
-        fix: `Specify the exact target origin in postMessage instead of '*'. Validate event.origin in message listeners.`,
-        code: `// Instead of:\nwindow.postMessage(data, '*')\n\n// Use:\nwindow.postMessage(data, 'https://app.example.com')\n\n// In the listener:\nwindow.addEventListener('message', (event) => {\n  if (event.origin !== 'https://trusted.example.com') return;\n  // safe to process event.data\n});`,
-      };
-    }
-
-    // Client-side role check
-    if (category.includes("broken access control")) {
-      return {
-        fix: `Enforce authorization on the server. Client-side role checks are trivially bypassed by modifying localStorage or the JavaScript bundle.`,
-        code: `// Remove client-side gate:\n// if (user.role === 'admin') { ... }  ← move to server\n\n// Server must verify every request:\napp.get('/admin/data', requireRole('admin'), handler)\n\nfunction requireRole(role) {\n  return (req, res, next) => {\n    if (req.user?.role !== role) return res.sendStatus(403);\n    next();\n  };\n}`,
-      };
-    }
-
-    // SQL Injection with endpoint context
     if (category.includes("sql")) {
       const param = this.extractParamFromEvidence(finding.evidence);
       return {
@@ -900,39 +715,48 @@ export class AttackAnalyzer {
       };
     }
 
-    // Command Injection
     if (category.includes("command") || category.includes("execute")) {
       return {
         fix: `Remove shell execution on ${endpoint}. Use safe library functions instead.`,
-        code: `// Instead of:\nexec(\`echo \${userInput}\`);\n\n// Use:\nconst { execFile } = require('child_process');\nexecFile('echo', [userInput]); // or avoid shell entirely`,
+        code: `// Instead of:\nexec(\`echo \${userInput}\`);\n\n// Use:\nconst { execFile } = require('child_process');\nexecFile('echo', [userInput]); // no shell involved`,
       };
     }
 
-    // Path Traversal
-    if (category.includes("path") || category.includes("traversal") || category.includes("file")) {
+    if (category.includes("ssrf") || category.includes("server-side request")) {
       return {
-        fix: `Validate file paths on ${endpoint}. Ensure path resolves within allowed directory.`,
-        code: `const path = require('path');\nconst safePath = path.normalize(userPath);\nif (!safePath.startsWith(ALLOWED_DIR)) {\n  throw new Error('Invalid path');\n}`,
+        fix: `Allowlist outbound destinations on ${endpoint} and block link-local and private address ranges.`,
+        code: `const ALLOWED = new Set(['api.partner.com']);\nconst url = new URL(userSuppliedUrl);\nif (!ALLOWED.has(url.hostname)) {\n  throw new Error('Destination not allowed');\n}\n// Also resolve DNS and reject 169.254.0.0/16, 10/8, 172.16/12, 192.168/16`,
       };
     }
 
-    // Broken Access Control / IDOR
+    if (category.includes("mass assignment")) {
+      return {
+        fix: `Bind only explicitly allowed fields on ${endpoint}.`,
+        code: `// Instead of:\nawait User.update(req.body, { where: { id } });\n\n// Use an allowlist:\nconst { name, email } = req.body;\nawait User.update({ name, email }, { where: { id } });`,
+      };
+    }
+
+    if (category.includes("path") || category.includes("traversal")) {
+      return {
+        fix: `Validate file paths on ${endpoint}. Ensure the path resolves within the allowed directory.`,
+        code: `const path = require('path');\nconst safePath = path.resolve(ALLOWED_DIR, userPath);\nif (!safePath.startsWith(ALLOWED_DIR)) {\n  throw new Error('Invalid path');\n}`,
+      };
+    }
+
     if (category.includes("access") || category.includes("idor") || category.includes("auth")) {
       return {
-        fix: `Enforce ownership check on ${endpoint}. Verify resource belongs to authenticated user.`,
-        code: `// Add authorization check:\nif (resource.userId !== req.user.id) {\n  return res.status(403).json({ error: 'Forbidden' });\n}`,
+        fix: `Enforce an ownership check on ${endpoint}. Verify the resource belongs to the authenticated caller.`,
+        code: `if (resource.userId !== req.user.id) {\n  return res.status(403).json({ error: 'Forbidden' });\n}`,
       };
     }
 
-    // XSS
     if (category.includes("xss") || category.includes("script")) {
       return {
-        fix: `Encode output on ${endpoint}. Implement Content-Security-Policy header.`,
-        code: `// Encode before rendering:\nconst escaped = escapeHtml(userInput);\n\n// Add CSP header:\nres.setHeader('Content-Security-Policy', "default-src 'self'");`,
+        fix: `Encode output on ${endpoint} and set a Content-Security-Policy header.`,
+        code: `const escaped = escapeHtml(userInput);\nres.setHeader('Content-Security-Policy', "default-src 'self'");`,
       };
     }
 
-    // Information Disclosure
     if (
       category.includes("disclosure") ||
       category.includes("debug") ||
@@ -940,41 +764,44 @@ export class AttackAnalyzer {
     ) {
       return {
         fix: `Remove or protect ${endpoint}. Disable verbose errors in production.`,
-        code: `// Remove debug endpoint in production:\nif (process.env.NODE_ENV === 'production') {\n  // Don't register debug routes\n}\n\n// Sanitize error responses:\nres.status(500).json({ error: 'Internal server error' });`,
+        code: `if (process.env.NODE_ENV === 'production') {\n  // Do not register debug routes\n}\n\nres.status(500).json({ error: 'Internal server error' });`,
       };
     }
 
-    // Sensitive Data Exposure
     if (category.includes("sensitive") || category.includes("exposure")) {
       return {
-        fix: `Mask sensitive data in ${endpoint} response. Never return passwords/tokens.`,
-        code: `// Sanitize response:\nconst sanitized = {\n  ...user,\n  password: undefined,\n  apiKey: undefined,\n};`,
+        fix: `Mask sensitive data in the ${endpoint} response. Never return passwords or tokens.`,
+        code: `const sanitized = {\n  ...user,\n  password: undefined,\n  apiKey: undefined,\n};`,
       };
     }
 
-    // Dependency vulnerability
     if (category.includes("dependency") || category.includes("vulnerability")) {
       const pkg = finding.package || "affected package";
       const fixed = finding.fixedVersion;
+      const kevNote = finding.knownExploited
+        ? " This CVE is in the CISA KEV catalog and is being exploited in the wild."
+        : "";
       return {
-        fix: `Update ${pkg}${fixed ? ` to version ${fixed}` : " to latest secure version"}.`,
+        fix: `Update ${pkg}${fixed ? ` to version ${fixed}` : " to the latest secure version"}.${kevNote}`,
         code: fixed ? `npm install ${pkg}@${fixed}` : `npm update ${pkg}`,
       };
     }
 
-    // Default
+    if (category.includes("header") || category.includes("misconfiguration")) {
+      return {
+        fix: `Add the missing response headers at your edge or in the application. This is defence in depth, not an exploitable issue on its own.`,
+        code: `app.use(helmet());`,
+      };
+    }
+
     return {
-      fix: `Review and address ${finding.category} on ${endpoint || "affected component"}.`,
+      fix: `Review and address ${finding.category} on ${endpoint || "the affected component"}.`,
     };
   }
 
-  /**
-   * Extract parameter name from evidence if available
-   */
   private extractParamFromEvidence(evidence?: string): string | undefined {
     if (!evidence) return undefined;
 
-    // Look for common patterns
     const patterns = [
       /param(?:eter)?[:\s]+['"]?(\w+)/i,
       /(\w+)\s*=\s*['"]?[^'"]+/,
@@ -989,31 +816,22 @@ export class AttackAnalyzer {
     return undefined;
   }
 
-  /**
-   * Determine remediation priority based on attack feasibility
-   */
   private getRemediationPriority(finding: Finding): "immediate" | "high" | "medium" | "low" {
-    const vector = this.analyzeAttackVector(finding);
+    if (this.isExploitConfirmed(finding)) return "immediate";
+    if (finding.knownExploited) return "immediate";
 
-    if (vector.isConfirmed) return "immediate";
-    if (vector.feasibilityScore >= 0.7) return "immediate";
+    const vector = this.analyzeAttackVector(finding);
     if (vector.feasibilityScore >= 0.5) return "high";
-    if (vector.feasibilityScore >= 0.3) return "medium";
+    if (vector.feasibilityScore >= REVIEW_THRESHOLD) return "medium";
     return "low";
   }
 
-  /**
-   * Normalize endpoint for grouping
-   */
   private normalizeEndpoint(endpoint?: string): string {
     if (!endpoint) return "no-endpoint";
 
-    // Normalize path parameters
-    let normalized = endpoint
+    return endpoint
       .replace(/\/\d+/g, "/:id")
       .replace(/\/[a-f0-9-]{36}/gi, "/:uuid")
-      .replace(/\?.*/g, ""); // Remove query string
-
-    return normalized;
+      .replace(/\?.*/g, "");
   }
 }

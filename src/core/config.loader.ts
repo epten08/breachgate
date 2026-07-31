@@ -78,24 +78,12 @@ export interface ScannersConfig {
       ignoreUnfixed?: boolean;
     };
   };
-  container: {
-    enabled: boolean;
-    images?: string[];
-    trivy?: {
-      severityThreshold?: Severity;
-      ignoreUnfixed?: boolean;
-    };
-  };
   dynamic: {
     enabled: boolean;
     zap?: {
       apiScanType?: "api" | "full";
       maxDuration?: number;
     };
-  };
-  graphql?: {
-    enabled: boolean;
-    endpoint?: string;
   };
   ai: {
     enabled: boolean;
@@ -109,16 +97,24 @@ export interface ScannersConfig {
     replayTests?: string;
     saveTests?: string;
   };
-  frontend?: {
-    enabled: boolean;
-    targetDir?: string;
-    framework?: "react" | "vue" | "angular" | "next" | "auto";
-    skipSemgrep?: boolean;
-    skipSecrets?: boolean;
-    skipDeps?: boolean;
-    skipProjectChecks?: boolean;
-  };
   plugins?: string[];
+}
+
+/**
+ * Exploit intelligence configuration.
+ *
+ * EPSS (exploit probability) and CISA KEV (confirmed in-the-wild exploitation)
+ * replace hand-tuned category coefficients for CVE-bearing findings.
+ */
+export interface IntelConfig {
+  /** Set false to run fully offline. Scores fall back to the on-disk cache. */
+  enabled?: boolean;
+  /** Cache location for EPSS and KEV data. */
+  cacheDir?: string;
+  /** How long cached intel stays fresh, in hours. */
+  cacheTtlHours?: number;
+  /** Per-request timeout in milliseconds. */
+  timeoutMs?: number;
 }
 
 export type ReportFormat = "markdown" | "json" | "sarif" | "html";
@@ -174,6 +170,7 @@ export interface SecurityBotConfig {
   };
   safety?: SafetyConfig;
   policy?: PolicyConfig;
+  intel?: IntelConfig;
   reporting: ReportingConfig;
   notifications?: NotificationConfig;
 }
@@ -183,14 +180,18 @@ const DEFAULT_CONFIG: SecurityBotConfig = {
   target: {},
   scanners: {
     static: { enabled: true },
-    container: { enabled: true },
     dynamic: { enabled: true },
     ai: { enabled: false },
-    frontend: { enabled: false },
   },
   thresholds: {
     failOn: "HIGH",
     warnOn: "MEDIUM",
+  },
+  intel: {
+    enabled: true,
+    cacheDir: ".breach-gate-cache",
+    cacheTtlHours: 24,
+    timeoutMs: 5000,
   },
   safety: {
     profile: "safe-active",
@@ -262,16 +263,13 @@ function mergeConfig(
     auth: overrides.auth ?? defaults.auth,
     scanners: {
       static: { ...defaults.scanners.static, ...overrides.scanners?.static },
-      container: { ...defaults.scanners.container, ...overrides.scanners?.container },
       dynamic: { ...defaults.scanners.dynamic, ...overrides.scanners?.dynamic },
       ai: { ...defaults.scanners.ai, ...overrides.scanners?.ai },
-      frontend: overrides.scanners?.frontend
-        ? { ...defaults.scanners.frontend, ...overrides.scanners.frontend }
-        : defaults.scanners.frontend,
       plugins: overrides.scanners?.plugins ?? defaults.scanners.plugins,
     },
     thresholds: { ...defaults.thresholds, ...overrides.thresholds },
     safety: { ...defaults.safety, ...overrides.safety },
+    intel: { ...defaults.intel, ...overrides.intel },
     policy: overrides.policy
       ? {
           ...defaults.policy,
@@ -290,15 +288,7 @@ function mergeConfig(
 export function validateConfig(config: SecurityBotConfig): void {
   const errors: string[] = [];
 
-  // Frontend-only scans operate on the local filesystem and don't require a network target
-  const isFrontendOnly =
-    !!config.scanners.frontend?.enabled &&
-    !config.scanners.static.enabled &&
-    !config.scanners.container.enabled &&
-    !config.scanners.dynamic.enabled &&
-    !config.scanners.ai.enabled;
-
-  if (!isFrontendOnly && !config.target.dockerCompose && !config.target.baseUrl) {
+  if (!config.target.dockerCompose && !config.target.baseUrl) {
     errors.push("Either target.dockerCompose or target.baseUrl must be specified");
   }
 

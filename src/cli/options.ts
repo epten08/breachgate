@@ -16,13 +16,9 @@ export interface ScanOptions {
   quiet?: boolean;
   ci?: boolean; // Deterministic CI mode - minimal output
   skipStatic?: boolean;
-  skipContainer?: boolean;
   skipDynamic?: boolean;
   skipAi?: boolean;
-  skipFrontend?: boolean;
-  frontend?: boolean;
-  framework?: string;
-  frontendPath?: string;
+  offline?: boolean; // Skip EPSS/KEV network lookups, use cache only
   explainVerdict?: boolean;
 }
 

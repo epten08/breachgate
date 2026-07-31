@@ -80,7 +80,7 @@ async function checkScannerPrerequisites(
     (await checkCommand("zap.bat")) ||
     (await checkCommand("zap-cli"));
 
-  if (config.scanners.static.enabled || config.scanners.container.enabled) {
+  if (config.scanners.static.enabled) {
     results.push(
       toolResult(
         "trivy",
@@ -91,14 +91,9 @@ async function checkScannerPrerequisites(
     );
   }
 
-  if (config.scanners.container.enabled || config.target.dockerCompose) {
+  if (config.target.dockerCompose) {
     results.push(
-      toolResult(
-        "docker",
-        hasDocker,
-        ciMode,
-        "Docker is required for container scans or Docker Compose targets"
-      )
+      toolResult("docker", hasDocker, ciMode, "Docker is required for Docker Compose targets")
     );
   }
 
@@ -120,50 +115,6 @@ async function checkScannerPrerequisites(
       !!process.env.ANTHROPIC_API_KEY;
     results.push(
       toolResult("ai", hasAiConfig, ciMode, "AI provider configuration is required for AI scans")
-    );
-  }
-
-  if (config.scanners.frontend?.enabled) {
-    const [hasSemgrep, hasGitleaks, hasOsv, hasNpm] = await Promise.all([
-      checkCommand("semgrep"),
-      checkCommand("gitleaks"),
-      checkCommand("osv-scanner"),
-      checkCommand("npm"),
-    ]);
-
-    results.push(
-      toolResult(
-        "semgrep",
-        hasSemgrep,
-        false,
-        hasSemgrep
-          ? "Semgrep available for static analysis"
-          : "Semgrep not found — install: pip install semgrep  |  https://semgrep.dev/docs/getting-started"
-      )
-    );
-
-    results.push(
-      toolResult(
-        "gitleaks",
-        hasGitleaks,
-        false,
-        hasGitleaks
-          ? "Gitleaks available for secrets detection"
-          : "Gitleaks not found — install: brew install gitleaks  |  https://github.com/gitleaks/gitleaks#installing"
-      )
-    );
-
-    results.push(
-      toolResult(
-        "osv-scanner or npm",
-        hasOsv || hasNpm,
-        ciMode,
-        hasOsv
-          ? "osv-scanner available for dependency scanning"
-          : hasNpm
-            ? "npm audit available (install osv-scanner for richer results: https://google.github.io/osv-scanner)"
-            : "Neither osv-scanner nor npm found — dependency scanning unavailable"
-      )
     );
   }
 

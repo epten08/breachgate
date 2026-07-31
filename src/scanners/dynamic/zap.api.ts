@@ -39,6 +39,20 @@ const RISK_MAP: Record<string, string> = {
   "3": "HIGH",
 };
 
+/**
+ * ZAP riskcode 0 is informational by design (timestamp disclosure, server
+ * banner, comment detection). These are not security findings and previously
+ * flowed straight into the verdict, where a timestamp disclosure was reported
+ * as a confirmed data exfiltration breach. They are dropped at the source.
+ */
+const INFORMATIONAL_RISK_CODE = "0";
+
+/**
+ * ZAP's own confidence rating. "Low" confidence alerts are pattern guesses and
+ * generate most of the noise, so they are dropped too.
+ */
+const LOW_ZAP_CONFIDENCE = new Set(["0", "1", "false positive", "low"]);
+
 export class ZapApiScanner implements Scanner {
   name = "OWASP ZAP API";
   category = "dynamic" as const;
@@ -457,17 +471,60 @@ export class ZapApiScanner implements Scanner {
     logger.warn(`${scanType} timed out`);
   }
 
+  /**
+   * Convert ZAP alerts into findings.
+   *
+   * Two rules that did not exist before:
+   *
+   *  1. Informational and low-confidence alerts are discarded here rather than
+   *     being promoted to LOW and carried into the verdict.
+   *
+   *  2. No alert is ever marked as proven. ZAP reports what it noticed, and its
+   *     active scanner does not hand back a machine-readable demonstration that
+   *     an attack succeeded. Treating every ZAP alert as a confirmed exploit,
+   *     which is what the previous code did, turned a missing X-Frame-Options
+   *     header into "active attacks succeeded during testing".
+   *
+   *     ZAP findings therefore arrive with no proofs and are scored on
+   *     feasibility like any other unconfirmed finding.
+   */
   private parseAlerts(alerts: ZapAlert[], role?: string): RawFinding[] {
-    return alerts.map((alert) => ({
+    const kept = alerts.filter((alert) => {
+      if (alert.riskcode === INFORMATIONAL_RISK_CODE) {
+        logger.debug(`Dropping informational ZAP alert: ${alert.name}`);
+        return false;
+      }
+      if (LOW_ZAP_CONFIDENCE.has(String(alert.confidence ?? "").toLowerCase())) {
+        logger.debug(`Dropping low-confidence ZAP alert: ${alert.name}`);
+        return false;
+      }
+      return true;
+    });
+
+    const dropped = alerts.length - kept.length;
+    if (dropped > 0) {
+      logger.debug(`Dropped ${dropped} informational or low-confidence ZAP alert(s)`);
+    }
+
+    return kept.map((alert) => ({
       source: this.name,
       category: this.mapCategory(alert.name),
       description: alert.desc?.replace(/<[^>]*>/g, "") || alert.name,
       endpoint: `${alert.method} ${alert.uri}`,
       role,
       severityHint: RISK_MAP[alert.riskcode] || "LOW",
-      evidence: alert.evidence || alert.attack,
+      evidence: [
+        alert.attack ? `Attack: ${alert.attack}` : undefined,
+        alert.evidence ? `Evidence: ${alert.evidence}` : undefined,
+        alert.param ? `Parameter: ${alert.param}` : undefined,
+        `ZAP confidence: ${alert.confidence}`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
       cwe: alert.cweid ? `CWE-${alert.cweid}` : undefined,
       reference: alert.reference,
+      // Detected, not demonstrated. See the note above.
+      proofs: [],
     }));
   }
 

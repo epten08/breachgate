@@ -47,7 +47,6 @@ async function runWatch(options: {
     const { Orchestrator } = await import("../../orchestrator/orchestrator.js");
     const { EnvironmentManager } = await import("../../orchestrator/environment.manager.js");
     const { TrivyStaticScanner } = await import("../../scanners/static/trivy.static.js");
-    const { TrivyImageScanner } = await import("../../scanners/container/trivy.image.js");
     const { ZapApiScanner } = await import("../../scanners/dynamic/zap.api.js");
     const { AIScanner } = await import("../../scanners/ai/ai.scanner.js");
     const { resolveAuthContexts } = await import("../../auth/auth.js");
@@ -61,11 +60,7 @@ async function runWatch(options: {
       const authContexts = await resolveAuthContexts(config.auth);
       const auth = authContexts[0] ?? { type: "none", role: "anonymous" };
 
-      const scanners: Scanner[] = [
-        new TrivyStaticScanner(),
-        new TrivyImageScanner(),
-        new ZapApiScanner(),
-      ];
+      const scanners: Scanner[] = [new TrivyStaticScanner(), new ZapApiScanner()];
       if (config.scanners.ai.enabled && config.scanners.ai.provider) {
         scanners.push(
           new AIScanner({

@@ -13,12 +13,10 @@ import { Orchestrator, ScanResult, ScannerStatus } from "../../orchestrator/orch
 import { EnvironmentManager } from "../../orchestrator/environment.manager.js";
 import { AuthContext, EnvironmentContext, ExecutionContext } from "../../orchestrator/context.js";
 import { TrivyStaticScanner } from "../../scanners/static/trivy.static.js";
-import { TrivyImageScanner } from "../../scanners/container/trivy.image.js";
 import { ZapApiScanner } from "../../scanners/dynamic/zap.api.js";
 import { AIScanner } from "../../scanners/ai/ai.scanner.js";
-import { GraphQLScanner } from "../../scanners/graphql/graphql.scanner.js";
-import { FrontendScanner } from "../../scanners/frontend/index.js";
 import { Scanner, ScannerCategory } from "../../scanners/scanner.js";
+import { ExploitIntel } from "../../intel/exploit.intel.js";
 import { ReportGenerator } from "../../reports/report.generator.js";
 import {
   applyBaseline,
@@ -66,13 +64,9 @@ export function createRunCommand(): Command {
     .option("--baseline <path>", "Path to baseline/ignore file")
     .option("--differential", "Fail only on findings not covered by the baseline")
     .option("--skip-static", "Skip static analysis")
-    .option("--skip-container", "Skip container scanning")
     .option("--skip-dynamic", "Skip dynamic API scanning")
     .option("--skip-ai", "Skip AI-assisted testing")
-    .option("--frontend", "Enable frontend security scanning (Semgrep, Gitleaks, OSV, project checks)")
-    .option("--skip-frontend", "Skip frontend security scanning")
-    .option("--framework <type>", "Frontend framework hint: react, vue, angular, next, auto")
-    .option("--frontend-path <path>", "Path to frontend project root (default: current directory)")
+    .option("--offline", "Skip EPSS/KEV network lookups and use the local cache only")
     .option("--explain-verdict", "Show how each finding's feasibility score was calculated")
     .action(async (options: ScanOptions) => {
       await runScan(options);
@@ -236,36 +230,14 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
     if (options.skipStatic) {
       config.scanners.static.enabled = false;
     }
-    if (options.skipContainer) {
-      config.scanners.container.enabled = false;
-    }
     if (options.skipDynamic) {
       config.scanners.dynamic.enabled = false;
     }
     if (options.skipAi) {
       config.scanners.ai.enabled = false;
     }
-
-    // Frontend scanner — CLI flag enables/configures it
-    if (options.frontend) {
-      config.scanners.frontend = {
-        ...config.scanners.frontend,
-        enabled: true,
-      };
-    }
-    if (options.skipFrontend) {
-      if (config.scanners.frontend) config.scanners.frontend.enabled = false;
-    }
-    if (options.framework && config.scanners.frontend) {
-      config.scanners.frontend.framework = options.framework as
-        | "react"
-        | "vue"
-        | "angular"
-        | "next"
-        | "auto";
-    }
-    if (options.frontendPath && config.scanners.frontend) {
-      config.scanners.frontend.targetDir = options.frontendPath;
+    if (options.offline) {
+      config.intel = { ...config.intel, enabled: false };
     }
 
     applySafetyRunDefaults(config, isCiMode);
@@ -306,21 +278,11 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
     // Log enabled scanners
     const enabledScanners: string[] = [];
     if (config.scanners.static.enabled) enabledScanners.push("static");
-    if (config.scanners.container.enabled) enabledScanners.push("container");
     if (config.scanners.dynamic.enabled) enabledScanners.push("dynamic");
     if (config.scanners.ai.enabled) enabledScanners.push("ai");
-    if (config.scanners.frontend?.enabled) enabledScanners.push("frontend");
 
     logger.info(`Enabled scanners: ${enabledScanners.join(", ") || "none"}`);
   }
-
-  // Frontend-only mode: skip environment setup (no network target needed)
-  const isFrontendOnly =
-    !!config.scanners.frontend?.enabled &&
-    !config.scanners.static.enabled &&
-    !config.scanners.container.enabled &&
-    !config.scanners.dynamic.enabled &&
-    !config.scanners.ai.enabled;
 
   // Setup environment
   const envManager = new EnvironmentManager(config);
@@ -335,57 +297,41 @@ async function runSingleScan(options: ScanOptions): Promise<ScanOutcome> {
     allScannersFailed: false,
   };
   const scanStartTime = Date.now();
-  let targetUrlForReports =
-    config.target.baseUrl || config.target.dockerCompose || config.scanners.frontend?.targetDir || "local";
+  let targetUrlForReports = config.target.baseUrl || config.target.dockerCompose || "local";
 
   try {
-    if (isFrontendOnly) {
-      // Skip network environment setup — frontend scanner operates on the filesystem
-      const authContexts = await resolveAuthContexts(config.auth);
-      configureAiReplayArtifacts(config, isCiMode, authContexts.length);
-      const scanners = await createScanners(config);
-      const enabledCategories = getEnabledCategories(config);
-
-      if (!isCiMode) {
-        logger.banner("Running Frontend Scans");
-      }
-      scanResult = await runConfiguredScans({
-        config,
-        scanners,
-        enabledCategories,
-        envInfo: { baseUrl: targetUrlForReports, images: [], services: [], managedByUs: false },
-        openApiSpec,
-        authContexts,
-        isCiMode,
-      });
-    } else {
-      if (!isCiMode) {
-        logger.banner("Environment Setup");
-      }
-      const envInfo = await envManager.setup();
-      targetUrlForReports = envInfo.baseUrl;
-      enforceTargetSafety(config.safety, envInfo.baseUrl, isCiMode);
-
-      const authContexts = await resolveAuthContexts(config.auth);
-      configureAiReplayArtifacts(config, isCiMode, authContexts.length);
-
-      // Create scanners based on config
-      const scanners = await createScanners(config);
-      const enabledCategories = getEnabledCategories(config);
-
-      if (!isCiMode) {
-        logger.banner("Running Scans");
-      }
-      scanResult = await runConfiguredScans({
-        config,
-        scanners,
-        enabledCategories,
-        envInfo,
-        openApiSpec,
-        authContexts,
-        isCiMode,
-      });
+    if (!isCiMode) {
+      logger.banner("Environment Setup");
     }
+    const envInfo = await envManager.setup();
+    targetUrlForReports = envInfo.baseUrl;
+    enforceTargetSafety(config.safety, envInfo.baseUrl, isCiMode);
+
+    const authContexts = await resolveAuthContexts(config.auth);
+    configureAiReplayArtifacts(config, isCiMode, authContexts.length);
+
+    // Create scanners based on config
+    const scanners = await createScanners(config);
+    const enabledCategories = getEnabledCategories(config);
+
+    if (!isCiMode) {
+      logger.banner("Running Scans");
+    }
+    scanResult = await runConfiguredScans({
+      config,
+      scanners,
+      enabledCategories,
+      envInfo,
+      openApiSpec,
+      authContexts,
+      isCiMode,
+    });
+
+    // Enrich CVE-bearing findings with EPSS probability and CISA KEV status
+    // before any scoring happens. Fails open: unreachable intel leaves findings
+    // unchanged rather than blocking the scan.
+    const intel = new ExploitIntel(config.intel, config.configFilePath);
+    await intel.enrich(scanResult.findings);
 
     // Display CLI summary (skip in CI mode)
     if (!isCiMode) {
@@ -614,16 +560,7 @@ function combineExitCodes(current: number, next: number): number {
 }
 
 async function createScanners(config: SecurityBotConfig): Promise<Scanner[]> {
-  const scanners: Scanner[] = [
-    new TrivyStaticScanner(),
-    new TrivyImageScanner(),
-    new ZapApiScanner(),
-  ];
-
-  // Add GraphQL scanner if configured
-  if (config.scanners.graphql?.enabled) {
-    scanners.push(new GraphQLScanner());
-  }
+  const scanners: Scanner[] = [new TrivyStaticScanner(), new ZapApiScanner()];
 
   // Add AI scanner if configured
   if (config.scanners.ai.enabled && config.scanners.ai.provider) {
@@ -638,20 +575,6 @@ async function createScanners(config: SecurityBotConfig): Promise<Scanner[]> {
         maxTokens: config.scanners.ai.maxTokens,
         replayTests: config.scanners.ai.replayTests,
         saveTests: config.scanners.ai.saveTests,
-      })
-    );
-  }
-
-  // Add frontend scanner if configured
-  if (config.scanners.frontend?.enabled) {
-    scanners.push(
-      new FrontendScanner({
-        targetDir: config.scanners.frontend.targetDir,
-        framework: config.scanners.frontend.framework,
-        skipSemgrep: config.scanners.frontend.skipSemgrep,
-        skipSecrets: config.scanners.frontend.skipSecrets,
-        skipDeps: config.scanners.frontend.skipDeps,
-        skipProjectChecks: config.scanners.frontend.skipProjectChecks,
       })
     );
   }
@@ -679,10 +602,8 @@ async function createScanners(config: SecurityBotConfig): Promise<Scanner[]> {
 function getEnabledCategories(config: SecurityBotConfig): ScannerCategory[] {
   const categories: ScannerCategory[] = [];
   if (config.scanners.static.enabled) categories.push("static");
-  if (config.scanners.container.enabled) categories.push("container");
   if (config.scanners.dynamic.enabled) categories.push("dynamic");
   if (config.scanners.ai.enabled) categories.push("ai");
-  if (config.scanners.frontend?.enabled) categories.push("frontend");
   return categories;
 }
 
@@ -738,9 +659,7 @@ async function runConfiguredScans(options: RunConfiguredScansOptions): Promise<S
     });
   }
 
-  const sharedCategories = options.enabledCategories.filter(
-    (category) => category === "static" || category === "container"
-  );
+  const sharedCategories = options.enabledCategories.filter((category) => category === "static");
   const roleCategories = options.enabledCategories.filter(
     (category) => category === "dynamic" || category === "ai"
   );

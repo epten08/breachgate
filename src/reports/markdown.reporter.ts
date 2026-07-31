@@ -3,6 +3,12 @@ import { ReportingConfig } from "../core/config.loader.js";
 import { sortByRisk } from "../findings/normalizer.js";
 import { RiskEngine, Remediation } from "../findings/risk.engine.js";
 import { AttackAnalyzer, SecurityVerdict } from "../findings/attack.analyzer.js";
+import {
+  feasibilityOf,
+  feasibilityLabel,
+  explainExploitability,
+  scoreFinding,
+} from "../findings/score.js";
 
 export interface MarkdownReporterOptions {
   targetUrl: string;
@@ -394,7 +400,7 @@ export class MarkdownReporter {
       lines.push("");
       lines.push(`**Category:** ${finding.category}`);
       lines.push(
-        `**Risk Score:** ${finding.riskScore.toFixed(2)} (Exploitability: ${finding.exploitability.toFixed(2)}, Confidence: ${finding.confidence.toFixed(2)})`
+        `**Attack feasibility:** ${feasibilityOf(finding).toFixed(2)} (${feasibilityLabel(finding)}), confidence ${finding.confidence.toFixed(2)}`
       );
 
       if (finding.endpoint) {

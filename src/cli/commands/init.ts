@@ -54,31 +54,14 @@ async function runWizard(options: InitOptions): Promise<void> {
 
     // 3. Which scanners
     const scannersRaw = (
-      await rl.question(
-        "3. Enable scanners [static,container,dynamic,ai,frontend] (default: static,dynamic): "
-      )
+      await rl.question("3. Enable scanners [static,dynamic,ai] (default: static,dynamic): ")
     ).trim();
     const scannerList = scannersRaw
       ? scannersRaw.split(",").map((s) => s.trim().toLowerCase())
       : ["static", "dynamic"];
     const enableStatic = scannerList.includes("static");
-    const enableContainer = scannerList.includes("container");
     const enableDynamic = scannerList.includes("dynamic");
     const enableAi = scannerList.includes("ai");
-    const enableFrontend = scannerList.includes("frontend");
-
-    // 3b. Frontend framework (only if frontend enabled)
-    let frontendFramework = "auto";
-    if (enableFrontend) {
-      const frameworkRaw = (
-        await rl.question("3b. Frontend framework [react/vue/angular/next/auto] (default: auto): ")
-      )
-        .trim()
-        .toLowerCase();
-      frontendFramework = ["react", "vue", "angular", "next"].includes(frameworkRaw)
-        ? frameworkRaw
-        : "auto";
-    }
 
     // 4. CI provider
     const ciProviderRaw = (
@@ -105,11 +88,8 @@ async function runWizard(options: InitOptions): Promise<void> {
       targetUrl,
       authBlock,
       enableStatic,
-      enableContainer,
       enableDynamic,
       enableAi,
-      enableFrontend,
-      frontendFramework,
       failOn
     );
 
@@ -152,11 +132,8 @@ function buildWizardConfig(
   targetUrl: string,
   authBlock: string,
   enableStatic: boolean,
-  enableContainer: boolean,
   enableDynamic: boolean,
   enableAi: boolean,
-  enableFrontend: boolean,
-  frontendFramework: string,
   failOn: string
 ): string {
   const lines = [
@@ -172,8 +149,6 @@ function buildWizardConfig(
     `scanners:`,
     `  static:`,
     `    enabled: ${enableStatic}`,
-    `  container:`,
-    `    enabled: ${enableContainer}`,
     `  dynamic:`,
     `    enabled: ${enableDynamic}`,
     `  ai:`,
@@ -181,9 +156,6 @@ function buildWizardConfig(
     ...(enableAi
       ? [`    provider: ollama`, `    model: llama3:8b`, `    baseUrl: http://localhost:11434`]
       : []),
-    `  frontend:`,
-    `    enabled: ${enableFrontend}`,
-    ...(enableFrontend ? [`    framework: ${frontendFramework}`] : []),
     ``,
     `thresholds:`,
     `  failOn: ${failOn}`,
@@ -298,13 +270,6 @@ scanners:
       severityThreshold: MEDIUM
       ignoreUnfixed: false
 
-  container:
-    enabled: false
-    images: []
-    trivy:
-      severityThreshold: MEDIUM
-      ignoreUnfixed: false
-
   dynamic:
     enabled: true
     zap:
@@ -321,14 +286,11 @@ scanners:
     # saveTests: ./security-reports/ai-tests-{role}.json
     # replayTests: ./security-reports/ai-tests-user.json
 
-  frontend:
-    enabled: false
-    # framework: react  # react | vue | angular | next | auto
-    # targetDir: ./     # defaults to current working directory
-    # skipSemgrep: false
-    # skipSecrets: false
-    # skipDeps: false
-    # skipProjectChecks: false
+# Exploit intelligence used for prioritisation. Fails open if unreachable.
+intel:
+  enabled: true
+  cacheDir: .breach-gate-cache
+  cacheTtlHours: 24
 
 thresholds:
   failOn: HIGH

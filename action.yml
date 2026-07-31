@@ -1,5 +1,5 @@
 name: Breach Gate
-description: OWASP API security scanner with AI-assisted testing, static analysis, container scanning, and GraphQL probing.
+description: API deploy gate. Blocks only on proven exploitation, with EPSS and CISA KEV prioritisation.
 author: epten08
 
 branding:
@@ -47,18 +47,10 @@ inputs:
     description: Command used to install this action's dependencies.
     required: false
     default: npm ci
-  frontend:
-    description: Enable frontend security scanning (Semgrep, Gitleaks, OSV/npm audit, project health checks).
+  offline:
+    description: Use cached EPSS/KEV intel only. No network lookups during the scan.
     required: false
     default: "false"
-  framework:
-    description: Frontend framework hint for Semgrep rule selection (react, vue, angular, next, auto).
-    required: false
-    default: ""
-  frontend-path:
-    description: Path to the frontend directory to scan (default is the working directory).
-    required: false
-    default: ""
 
 outputs:
   verdict:
@@ -110,16 +102,8 @@ runs:
           cmd+=("${extra_args[@]}")
         fi
 
-        if [ "${{ inputs.frontend }}" = "true" ]; then
-          cmd+=(--frontend)
-        fi
-
-        if [ -n "${{ inputs.framework }}" ]; then
-          cmd+=(--framework "${{ inputs.framework }}")
-        fi
-
-        if [ -n "${{ inputs.frontend-path }}" ]; then
-          cmd+=(--frontend-path "${{ inputs.frontend-path }}")
+        if [ "${{ inputs.offline }}" = "true" ]; then
+          cmd+=(--offline)
         fi
 
         output=$("${cmd[@]}" 2>&1)

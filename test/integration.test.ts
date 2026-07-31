@@ -18,6 +18,7 @@ import { SarifReporter } from "../src/reports/sarif.reporter.js";
 import { HtmlReporter } from "../src/reports/html.reporter.js";
 import { CliSummary } from "../src/reports/cli.summary.js";
 import { AttackAnalyzer } from "../src/findings/attack.analyzer.js";
+import { feasibilityOf, explainExploitability } from "../src/findings/score.js";
 import { Orchestrator, ScanResult } from "../src/orchestrator/orchestrator.js";
 import { resolveAuthContexts, buildAuthHeaders } from "../src/auth/auth.js";
 import { TestExecutor } from "../src/ai/executor.js";
@@ -104,6 +105,17 @@ function createHeaderTestCase(): SecurityTestCase {
     description: "Detect a missing response header",
     request: { method: "GET", path: "/health" },
     expectedVulnerable: { headerMissing: ["X-Test-Security"] },
+  };
+}
+
+function createInjectionTestCase(): SecurityTestCase {
+  return {
+    name: "SQLi - GET /items",
+    endpoint: "GET /items",
+    category: "SQL Injection",
+    description: "Inject a quote into the id parameter",
+    request: { method: "GET", path: "/items?id=1%27%20OR%201%3D1" },
+    expectedVulnerable: { bodyContains: ["syntax"] },
   };
 }
 
@@ -263,17 +275,32 @@ describe("Findings Normalizer", () => {
     const normalized = normalizeFindings(rawFindings);
     expect(Array.isArray(normalized)).toBe(true);
     expect(normalized.length).toBeGreaterThan(0);
-    expect(normalized[0].riskScore).toBeDefined();
+    expect(normalized[0].confidence).toBeDefined();
+    expect(normalized[0].proofs).toBeDefined();
   });
 
-  it("calculates risk scores in range 0-1", () => {
+  it("calculates feasibility scores in range 0-1", () => {
     const normalized = normalizeFindings(rawFindings);
     for (const finding of normalized) {
-      expect(finding.riskScore).toBeGreaterThanOrEqual(0);
-      expect(finding.riskScore).toBeLessThanOrEqual(1);
-      expect(finding.exploitability).toBeGreaterThanOrEqual(0);
+      const score = feasibilityOf(finding);
+      expect(score).toBeGreaterThanOrEqual(0);
+      expect(score).toBeLessThanOrEqual(1);
       expect(finding.confidence).toBeGreaterThanOrEqual(0);
+      expect(finding.confidence).toBeLessThanOrEqual(1);
     }
+  });
+
+  it("drops informational findings before they reach the pipeline", () => {
+    const normalized = normalizeFindings([
+      {
+        source: "OWASP ZAP API",
+        category: "Information Disclosure",
+        description: "Server banner",
+        severityHint: "INFO",
+        proofs: [],
+      },
+    ]);
+    expect(normalized).toHaveLength(0);
   });
 
   it("deduplicates similar findings", () => {
@@ -283,11 +310,18 @@ describe("Findings Normalizer", () => {
     expect(sqlFindings[0].duplicateCount).toBeGreaterThanOrEqual(1);
   });
 
-  it("sorts by risk in descending order", () => {
+  it("sorts confirmed findings first, then by severity", () => {
     const normalized = normalizeFindings(rawFindings);
     const sorted = sortByRisk(normalized);
+    const order = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 } as const;
     for (let i = 1; i < sorted.length; i++) {
-      expect(sorted[i - 1].riskScore).toBeGreaterThanOrEqual(sorted[i].riskScore);
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      if (prev.proofs.length === curr.proofs.length) {
+        expect(order[prev.severity]).toBeGreaterThanOrEqual(order[curr.severity]);
+      } else {
+        expect(prev.proofs.length).toBeGreaterThan(curr.proofs.length);
+      }
     }
   });
 });
@@ -543,8 +577,8 @@ describe("Auth, Replay, and Safety", () => {
           headers: { "X-Test-Role": "admin" },
         })
       );
-      const results = await executor.execute([createHeaderTestCase()]);
-      expect(results.length).toBe(1);
+      const outcome = await executor.execute([createHeaderTestCase()]);
+      expect(outcome.results.length).toBe(1);
       expect(capturedHeaders.Cookie).toBe("sid=cookie-value");
       expect(capturedHeaders["X-Test-Role"]).toBe("admin");
     } finally {
@@ -556,10 +590,19 @@ describe("Auth, Replay, and Safety", () => {
     const testDir = "./test-output-replay";
     const replayPath = join(testDir, "ai-replay.json");
     mkdirSync(testDir, { recursive: true });
-    writeFileSync(replayPath, JSON.stringify({ tests: [createHeaderTestCase()] }), "utf-8");
+    writeFileSync(replayPath, JSON.stringify({ tests: [createInjectionTestCase()] }), "utf-8");
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => new Response("ok", { status: 200 })) as typeof fetch;
+    let call = 0;
+    globalThis.fetch = (async () => {
+      // First call is the benign baseline, second is the attack request. The
+      // error only appears for the attack, which is what baseline diffing
+      // requires before a proof is accepted.
+      call++;
+      return call === 1
+        ? new Response(JSON.stringify({ ok: true }), { status: 200 })
+        : new Response('You have an error in your SQL syntax near "1 OR 1=1"', { status: 500 });
+    }) as typeof fetch;
 
     try {
       const scanner = new AIScanner({
@@ -568,8 +611,10 @@ describe("Auth, Replay, and Safety", () => {
         replayTests: replayPath,
       });
       const findings = await scanner.run(createTestExecutionContext());
-      expect(findings.length).toBeGreaterThan(0);
-      expect(findings[0].role).toBe("anonymous");
+      const proven = findings.filter((f) => (f.proofs?.length ?? 0) > 0);
+      expect(proven.length).toBeGreaterThan(0);
+      expect(proven[0].role).toBe("anonymous");
+      expect(proven[0].category).toBe("SQL Injection");
     } finally {
       globalThis.fetch = originalFetch;
       rmSync(testDir, { recursive: true, force: true });
@@ -656,115 +701,45 @@ describe("Scanner Failure Handling", () => {
 // Severity Weights
 // ---------------------------------------------------------------------------
 
-describe("Severity Weights", () => {
+describe("Feasibility scoring", () => {
   const findings = normalizeFindings(createMockRawFindings());
 
-  it("CRITICAL findings have higher avg risk than others", () => {
-    const critical = findings.filter((f) => f.severity === "CRITICAL");
-    const others = findings.filter((f) => f.severity !== "CRITICAL");
-    if (critical.length > 0 && others.length > 0) {
-      const avgCritical = critical.reduce((s, f) => s + f.riskScore, 0) / critical.length;
-      const avgOthers = others.reduce((s, f) => s + f.riskScore, 0) / others.length;
-      expect(avgCritical).toBeGreaterThan(avgOthers);
+  it("scores proven findings above unproven ones of the same category", () => {
+    const [unproven] = normalizeFindings([
+      {
+        source: "OWASP ZAP API",
+        category: "SQL Injection",
+        description: "Possible SQLi",
+        endpoint: "POST /api/data",
+        severityHint: "CRITICAL",
+        proofs: [],
+      },
+    ]);
+    const [proven] = normalizeFindings([
+      {
+        source: "AI Security Tester",
+        category: "SQL Injection",
+        description: "SQLi confirmed",
+        endpoint: "POST /api/data",
+        severityHint: "CRITICAL",
+        proofs: ["sql-error"],
+        proofExcerpt: "SQL syntax error near",
+      },
+    ]);
+
+    expect(feasibilityOf(proven)).toBeGreaterThan(feasibilityOf(unproven));
+  });
+
+  it("keeps every unproven finding below the UNSAFE bar", () => {
+    for (const finding of findings.filter((f) => f.proofs.length === 0)) {
+      const verdict = new AttackAnalyzer().generateVerdict([finding]);
+      expect(verdict.verdict).not.toBe("UNSAFE");
     }
   });
 
-  it("injection findings have exploitability above 0.5", () => {
-    const injections = findings.filter((f) => f.category.toLowerCase().includes("injection"));
-    for (const finding of injections) {
-      expect(finding.exploitability).toBeGreaterThan(0.5);
+  it("explains where each exploitability number came from", () => {
+    for (const finding of findings) {
+      expect(explainExploitability(finding)).toBeTruthy();
     }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Frontend Scanner Scoring
-// ---------------------------------------------------------------------------
-
-describe("Frontend Scanner Scoring", () => {
-  const gitleaksCritical: RawFinding = {
-    source: "Gitleaks",
-    category: "Exposed Secret",
-    description: "Generic API Key detected in src/services/auth.ts",
-    endpoint: "src/services/auth.ts:3",
-    severityHint: "CRITICAL",
-    evidence: "sk_l****t",
-    reference: "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html",
-  };
-
-  const semgrepHigh: RawFinding = {
-    source: "Semgrep Frontend",
-    category: "Insecure Token Storage",
-    description: "Auth token stored in localStorage — vulnerable to XSS token theft",
-    endpoint: "src/services/auth.ts:10",
-    severityHint: "HIGH",
-  };
-
-  const semgrepMedium: RawFinding = {
-    source: "Semgrep Frontend",
-    category: "Insecure Communication",
-    description: "HTTP used instead of HTTPS for fetch request",
-    endpoint: "src/services/api.ts:5",
-    severityHint: "MEDIUM",
-  };
-
-  it("Gitleaks CRITICAL secret has risk score above 0.7", () => {
-    const findings = normalizeFindings([gitleaksCritical]);
-    expect(findings.length).toBe(1);
-    expect(findings[0].riskScore).toBeGreaterThan(0.7);
-  });
-
-  it("Gitleaks CRITICAL secret does not produce SAFE verdict", () => {
-    const findings = normalizeFindings([gitleaksCritical]);
-    const analyzer = new AttackAnalyzer();
-    const verdict = analyzer.generateVerdictWithStatus(findings, {
-      isComplete: true,
-      failedScanners: [],
-    });
-    expect(verdict.verdict).not.toBe("SAFE");
-  });
-
-  it("Semgrep HIGH finding has risk score above 0.6", () => {
-    const findings = normalizeFindings([semgrepHigh]);
-    expect(findings[0].riskScore).toBeGreaterThan(0.6);
-  });
-
-  it("frontend findings maintain severity ordering: CRITICAL > HIGH > MEDIUM", () => {
-    const findings = normalizeFindings([gitleaksCritical, semgrepHigh, semgrepMedium]);
-    const sorted = findings.sort((a, b) => b.riskScore - a.riskScore);
-    expect(sorted[0].riskScore).toBeGreaterThan(sorted[1].riskScore);
-    expect(sorted[1].riskScore).toBeGreaterThan(sorted[2].riskScore);
-  });
-
-  it("config loader includes frontend scanner in DEFAULT_CONFIG", () => {
-    const config = loadConfig();
-    expect(config.scanners.frontend).toBeDefined();
-    expect(config.scanners.frontend?.enabled).toBe(false);
-  });
-
-  it("frontend-only config validates without a target URL", () => {
-    const testDir = "./test-output-frontend-config";
-    const configPath = join(testDir, "frontend.config.yml");
-    mkdirSync(testDir, { recursive: true });
-    writeFileSync(
-      configPath,
-      [
-        `version: "1.0"`,
-        `scanners:`,
-        `  static:`,
-        `    enabled: false`,
-        `  container:`,
-        `    enabled: false`,
-        `  dynamic:`,
-        `    enabled: false`,
-        `  ai:`,
-        `    enabled: false`,
-        `  frontend:`,
-        `    enabled: true`,
-      ].join("\n")
-    );
-    const config = loadConfig(configPath);
-    expect(() => validateConfig(config)).not.toThrow();
-    rmSync(testDir, { recursive: true });
   });
 });

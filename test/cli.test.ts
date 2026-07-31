@@ -70,37 +70,10 @@ target:
 scanners:
   static:
     enabled: false
-  container:
-    enabled: false
   dynamic:
     enabled: false
   ai:
     enabled: false
-thresholds:
-  failOn: HIGH
-  warnOn: MEDIUM
-reporting:
-  outputDir: ${outputDir}
-  formats:
-    - json
-  includeEvidence: true
-`;
-}
-
-function frontendOnlyConfig(outputDir: string): string {
-  return `
-version: "1.0"
-scanners:
-  static:
-    enabled: false
-  container:
-    enabled: false
-  dynamic:
-    enabled: false
-  ai:
-    enabled: false
-  frontend:
-    enabled: true
 thresholds:
   failOn: HIGH
   warnOn: MEDIUM
@@ -120,8 +93,6 @@ target:
 scanners:
   static:
     enabled: true
-  container:
-    enabled: false
   dynamic:
     enabled: false
   ai:
@@ -222,80 +193,6 @@ describe("Monorepo and Multi-Config", () => {
     expect(result.stdout).toContain("SECURITY CONFIG:");
     const reportFiles = findFiles(outputDir, "security-report.json");
     expect(reportFiles.length).toBe(2);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Frontend Scanner CLI
-// ---------------------------------------------------------------------------
-
-describe("Frontend Scanner CLI", () => {
-  it("completes frontend-only scan without a network target", async () => {
-    const configPath = join(ROOT, "frontend-security.config.yml");
-    const outputDir = join(ROOT, "frontend-reports").replace(/\\/g, "/");
-    writeConfig(configPath, frontendOnlyConfig(outputDir));
-
-    // Run against a minimal directory — tools may be absent (graceful degradation expected)
-    const result = await runCli([
-      "scan",
-      "--ci",
-      "--config",
-      configPath,
-      "--workdir",
-      ROOT,
-      "--format",
-      "json",
-    ]);
-
-    // Exit 0 (PASSED) or 1 (FAILED due to findings) are both valid outcomes.
-    // Exit 2 would mean a crash/config error, which is not acceptable.
-    expect(result.exitCode).toBeLessThan(2);
-    expect(existsSync(join(outputDir, "security-report.json"))).toBe(true);
-  });
-
-  it("--frontend flag enables frontend scanner without a config file scanner block", async () => {
-    const configPath = join(ROOT, "api-with-frontend.config.yml");
-    const outputDir = join(ROOT, "api-frontend-reports").replace(/\\/g, "/");
-    writeConfig(
-      configPath,
-      `
-version: "1.0"
-target:
-  baseUrl: http://127.0.0.1:9
-scanners:
-  static:
-    enabled: false
-  container:
-    enabled: false
-  dynamic:
-    enabled: false
-  ai:
-    enabled: false
-thresholds:
-  failOn: HIGH
-  warnOn: MEDIUM
-reporting:
-  outputDir: ${outputDir}
-  formats:
-    - json
-  includeEvidence: true
-`
-    );
-
-    const result = await runCli([
-      "scan",
-      "--ci",
-      "--config",
-      configPath,
-      "--frontend",
-      "--workdir",
-      ROOT,
-      "--format",
-      "json",
-    ]);
-
-    expect(result.exitCode).toBeLessThan(2);
-    expect(existsSync(join(outputDir, "security-report.json"))).toBe(true);
   });
 });
 

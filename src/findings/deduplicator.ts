@@ -165,33 +165,38 @@ export class Deduplicator {
     // Pick the best evidence (longest, most detailed)
     const bestEvidence = this.getBestEvidence(allFindings);
 
-    // Calculate average confidence, boosted by multiple sources
+    // Independent sources agreeing raises confidence that the detection is
+    // correct. This is the only score the deduplicator touches. It used to
+    // compute its own riskScore with a third, different formula; that has been
+    // removed so AttackAnalyzer remains the single scoring model.
     const baseConfidence =
       allFindings.reduce((sum, f) => sum + f.confidence, 0) / allFindings.length;
     const confidenceBoost = Math.min(duplicates.length * 0.05, 0.2);
     const mergedConfidence = Math.min(baseConfidence + confidenceBoost, 1.0);
 
-    // Take highest exploitability
-    const maxExploitability = Math.max(...allFindings.map((f) => f.exploitability));
+    // Proof is cumulative: if any source demonstrated exploitation, the merged
+    // finding is proven, and we keep the excerpt that backs it.
+    const mergedProofs = Array.from(new Set(allFindings.flatMap((f) => f.proofs)));
+    const proofExcerpt = allFindings.find((f) => f.proofExcerpt)?.proofExcerpt;
 
-    // Recalculate risk score
-    const severityWeight = SEVERITY_WEIGHTS[highestSeverity] / 4;
-    const riskScore = severityWeight * 0.4 + maxExploitability * 0.35 + mergedConfidence * 0.25;
-
-    // Merge CVE, CWE, references
+    // Merge CVE, CWE, references, and exploit intel
     const cve = primary.cve || duplicates.find((d) => d.cve)?.cve;
     const cwe = primary.cwe || duplicates.find((d) => d.cwe)?.cwe;
     const reference = primary.reference || duplicates.find((d) => d.reference)?.reference;
     const fixedVersion =
       primary.fixedVersion || duplicates.find((d) => d.fixedVersion)?.fixedVersion;
+    const knownExploited = allFindings.some((f) => f.knownExploited);
+    const epssScores = allFindings
+      .map((f) => f.epssScore)
+      .filter((s): s is number => s !== undefined);
 
     return {
       ...primary,
       severity: highestSeverity,
       evidence: bestEvidence,
       confidence: Math.round(mergedConfidence * 100) / 100,
-      exploitability: maxExploitability,
-      riskScore: Math.round(riskScore * 100) / 100,
+      proofs: mergedProofs,
+      proofExcerpt,
       sources: Array.from(allSources),
       deduplicated: true,
       duplicateCount: duplicates.length,
@@ -199,6 +204,8 @@ export class Deduplicator {
       cwe,
       reference,
       fixedVersion,
+      knownExploited: knownExploited || undefined,
+      epssScore: epssScores.length > 0 ? Math.max(...epssScores) : undefined,
     };
   }
 

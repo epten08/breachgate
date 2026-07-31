@@ -23,6 +23,23 @@ jobs:
 
       - run: npm ci
       - run: npm run typecheck
+
+      # Negative controls run BEFORE anything else. If the tool cannot stay
+      # quiet on a clean target, nothing else about the build matters.
+      - name: Negative controls (clean targets must stay SAFE)
+        run: npm run test:controls
+
+      # Accuracy gate. Precision must be exactly 1.0; a single false positive
+      # fails the build. The measured numbers are published in the README.
+      - name: Precision and recall measurement
+        run: npm run precision
+
+      - name: Upload precision report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: precision-report
+          path: security-reports/precision.json
       - run: npm run lint
       - run: npm run format:check
       - run: npm test
@@ -67,15 +84,16 @@ jobs:
           done
           exit 1
 
+      # Positive control: the deliberately vulnerable demo must not come back
+      # clean. Kept, but it is no longer the only behavioural check in CI.
       - name: Run Breach Gate demo smoke scan
         run: |
           node dist/cli/index.js scan \
             --ci \
             --target http://127.0.0.1:3000 \
             --skip-static \
-            --skip-container \
             --skip-dynamic \
-            --skip-ai \
+            --offline \
             --format json,markdown,sarif \
             --output security-reports/demo
 

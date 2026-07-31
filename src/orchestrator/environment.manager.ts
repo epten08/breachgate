@@ -96,12 +96,9 @@ export class EnvironmentManager {
       logger.debug("Skipping health check (dynamic scanning disabled)");
     }
 
-    // Use configured images for container scanning if specified
-    const configuredImages = this.config.scanners.container?.images || [];
-
     return {
       baseUrl,
-      images: configuredImages,
+      images: [],
       services: [],
       managedByUs: false,
     };
@@ -216,10 +213,6 @@ export class EnvironmentManager {
 
   private extractImages(config: DockerComposeConfig, composePath: string): string[] {
     const images: string[] = [];
-
-    if (this.config.scanners.container.images?.length) {
-      return this.config.scanners.container.images;
-    }
 
     for (const [name, service] of Object.entries(config.services || {})) {
       if (service.image) {

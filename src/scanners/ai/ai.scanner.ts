@@ -6,7 +6,7 @@ import { TestExecutor } from "../../ai/executor.js";
 import { TestEvaluator } from "../../ai/evaluator.js";
 import { AIConfig } from "../../ai/adversary.js";
 import { logger } from "../../core/logger.js";
-import { ScannerUnavailableError } from "../../core/errors.js";
+import { ScannerError, ScannerUnavailableError } from "../../core/errors.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
 
@@ -88,23 +88,53 @@ export class AIScanner implements Scanner {
 
       // Execute tests
       const executor = new TestExecutor(ctx);
-      const results = await executor.execute(testCases);
+      const outcome = await executor.execute(testCases);
+
+      // A scan that could not reach the target is a failed scan, not a clean
+      // one. Without this the orchestrator records success on an empty result
+      // set and the verdict comes back SAFE for an unreachable target.
+      if (outcome.attemptedTests > 0 && outcome.results.length === 0) {
+        throw new ScannerError(
+          `All ${outcome.attemptedTests} AI test request(s) failed to reach ${ctx.targetUrl}`,
+          this.name,
+          undefined,
+          "Check that the target URL is correct and reachable from this machine."
+        );
+      }
+
+      const errorRate =
+        outcome.attemptedTests > 0 ? outcome.erroredTests / outcome.attemptedTests : 0;
+      if (errorRate > 0.5) {
+        throw new ScannerError(
+          `${outcome.erroredTests} of ${outcome.attemptedTests} AI test requests failed. Results are not trustworthy.`,
+          this.name,
+          undefined,
+          "The target may be rate limiting, unstable, or partially unreachable."
+        );
+      }
+
+      if (outcome.erroredTests > 0) {
+        logger.warn(
+          `${outcome.erroredTests} of ${outcome.attemptedTests} AI test(s) errored and were not evaluated`
+        );
+      }
+
       logger.debug(
-        `Executed ${results.length} tests, ${results.filter((r) => r.isVulnerable).length} potential vulnerabilities`
+        `Executed ${outcome.results.length} tests, ${outcome.results.filter((r) => r.proofs.length > 0).length} with confirmed exploitation`
       );
 
       // Evaluate results
       const evaluator = new TestEvaluator(ctx, isAvailable ? aiConfig : undefined);
-      const findings = await evaluator.evaluate(results);
+      const findings = await evaluator.evaluate(outcome.results);
 
       logger.scanner(this.name, "done", `Found ${findings.length} issues`);
       return findings;
     } catch (err) {
-      if (err instanceof ScannerUnavailableError) {
+      if (err instanceof ScannerUnavailableError || err instanceof ScannerError) {
         throw err;
       }
       logger.scanner(this.name, "error", (err as Error).message);
-      return [];
+      throw new ScannerError((err as Error).message, this.name, err as Error);
     }
   }
 
