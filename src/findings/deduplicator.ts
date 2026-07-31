@@ -1,4 +1,4 @@
-import { Finding, FindingGroup, SEVERITY_WEIGHTS } from "./finding.js";
+import { Finding, FindingGroup } from "./finding.js";
 import { logger } from "../core/logger.js";
 
 export interface DeduplicationOptions {

@@ -147,6 +147,14 @@ export class CliSummary {
           )
         );
 
+        // Where the exploitability number came from: KEV, a proof observed in
+        // this scan, EPSS, or a category baseline guess.
+        console.log(chalk.gray(`     Basis: ${explainExploitability(finding)}`));
+
+        if (finding.proofs.length > 0 && finding.proofExcerpt) {
+          console.log(chalk.gray(`     Proof: ${this.truncate(finding.proofExcerpt, 100)}`));
+        }
+
         if (finding.cve) {
           console.log(chalk.gray(`     CVE: ${finding.cve}`));
         }
