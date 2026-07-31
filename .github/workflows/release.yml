@@ -37,7 +37,42 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # The tag is the version users will install. If it disagrees with
+      # package.json we would publish something other than what was tagged.
+      # auto-release.yml derives the tag from package.json so they match by
+      # construction, but a hand-pushed tag can drift.
+      - name: Tag must match package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          pkg=$(node -p "require('./package.json').version")
+          echo "tag=$tag package.json=$pkg"
+          if [ "$tag" != "$pkg" ]; then
+            echo "ERROR: tag v$tag does not match package.json $pkg" >&2
+            exit 1
+          fi
+
       - run: npm run typecheck
+
+      # Accuracy gates. These were missing from the release path, so a build
+      # whose precision gate had never run could be published. Precision is
+      # asserted at exactly 1.0, so a single false positive blocks the release.
+      # Ordered first for the same reason as in ci.yml: if the tool cannot stay
+      # quiet on a clean target, nothing else about the release matters.
+      - name: Negative controls (clean targets must stay SAFE)
+        run: npm run test:controls
+
+      - name: Precision and recall measurement
+        run: npm run precision
+
+      - name: Upload precision report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-precision-report
+          path: security-reports/precision.json
+
       - run: npm test
       - run: npm run test:cli
       - run: npm run build
