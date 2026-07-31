@@ -9,7 +9,16 @@ security.config.yml
 # Security scan output — contains potentially sensitive vulnerability details
 security-reports/
 *.sarif
+
+# Generated AI test artifacts. These are produced by a scan against a real
+# target and can embed endpoint paths and payloads, so they stay out of git.
 ai-tests*.json
+
+# ...except the demo replay fixture, which is deliberately checked in so the
+# demo and the CI smoke test run without a model or an API key. This negation
+# must stay below the rule above; without it the file is silently ignored and
+# CI fails with "AI replay artifact not found" while working fine locally.
+!demo/ai-tests.json
 
 # Cached EPSS and CISA KEV data
 .breach-gate-cache/
@@ -22,3 +31,6 @@ test-cli-output/
 src/**/*.js
 src/**/*.js.map
 src/**/*.d.ts
+# Scan output committed by mistake in v1
+demo/reports/
+demo-api.log

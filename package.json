@@ -62,7 +62,9 @@
     "demo": "tsx demo/vulnerable-api.ts",
     "test:controls": "vitest run test/negative-controls.test.ts",
     "precision": "vitest run test/precision.test.ts",
-    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "scan:demo": "tsx src/cli/index.ts scan --workdir demo --config security.config.yml -v",
+    "scan:demo:ci": "tsx src/cli/index.ts scan --workdir demo --config security.config.yml --ci --format json,markdown"
   },
   "author": "epten08",
   "license": "MIT",

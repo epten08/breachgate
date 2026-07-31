@@ -1,0 +1,102 @@
+{
+  "schemaVersion": "1.0",
+  "note": "Checked-in AI test cases for the demo API. Replaying these makes the demo deterministic and removes the need for a model or API key. Regenerate with: breach-gate scan --config security.config.yml (with scanners.ai.replayTests removed and a provider configured).",
+  "targetUrl": "http://localhost:3000",
+  "role": "anonymous",
+  "deterministic": true,
+  "tests": [
+    {
+      "name": "SQL injection via id parameter",
+      "endpoint": "GET /api/data",
+      "category": "SQL Injection",
+      "description": "Inject a single quote into the id parameter to break the query",
+      "request": {
+        "method": "GET",
+        "path": "/api/data?id=1%27%20OR%20%271%27%3D%271"
+      },
+      "expectedVulnerable": {
+        "bodyContains": ["syntax"]
+      }
+    },
+    {
+      "name": "Command injection via command field",
+      "endpoint": "POST /api/execute",
+      "category": "Command Injection",
+      "description": "Chain a second command using a shell metacharacter",
+      "request": {
+        "method": "POST",
+        "path": "/api/execute",
+        "body": { "command": "echo hello; id" }
+      },
+      "expectedVulnerable": {
+        "statusCodes": [200]
+      }
+    },
+    {
+      "name": "Path traversal via path parameter",
+      "endpoint": "GET /api/file",
+      "category": "Path Traversal",
+      "description": "Escape the intended directory to read a system file",
+      "request": {
+        "method": "GET",
+        "path": "/api/file?path=../../../../etc/passwd"
+      },
+      "expectedVulnerable": {
+        "statusCodes": [200]
+      }
+    },
+    {
+      "name": "Reflected XSS via search query",
+      "endpoint": "GET /api/search",
+      "category": "Cross-Site Scripting (XSS)",
+      "description": "Reflect a script tag into the HTML response unescaped",
+      "request": {
+        "method": "GET",
+        "path": "/api/search?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
+      },
+      "expectedVulnerable": {
+        "statusCodes": [200]
+      }
+    },
+    {
+      "name": "Debug endpoint exposes internals",
+      "endpoint": "GET /api/debug",
+      "category": "Information Disclosure",
+      "description": "Unauthenticated access to environment and user listing",
+      "request": {
+        "method": "GET",
+        "path": "/api/debug"
+      },
+      "expectedVulnerable": {
+        "statusCodes": [200]
+      }
+    },
+    {
+      "name": "Sensitive data in user lookup",
+      "endpoint": "GET /api/users",
+      "category": "Sensitive Data Exposure",
+      "description": "User record returns a password hint to an unauthenticated caller",
+      "request": {
+        "method": "GET",
+        "path": "/api/users?id=admin"
+      },
+      "expectedVulnerable": {
+        "statusCodes": [200]
+      }
+    },
+    {
+      "name": "Login with a benign credential pair",
+      "endpoint": "POST /api/login",
+      "category": "Broken Authentication",
+      "description": "Control case: a normal failed login must not be reported as a finding",
+      "request": {
+        "method": "POST",
+        "path": "/api/login",
+        "body": { "username": "nosuchuser", "password": "nosuchpassword" }
+      },
+      "expectedVulnerable": {
+        "statusCodes": [200]
+      }
+    }
+  ]
+}

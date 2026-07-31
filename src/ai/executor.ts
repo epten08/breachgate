@@ -349,35 +349,54 @@ export class TestExecutor {
     }
 
     // --- Proof: our own payload reflected back unescaped ---------------------
-    // Only counts when the payload is distinctive enough to be ours and it is
-    // not already present in the benign baseline.
-    const payload = extractPayload(testCase);
-    if (payload && payload.length >= 8 && isSuccess) {
-      const reflected = body.includes(payload) && !baselineBody.includes(payload.toLowerCase());
-      const isScriptish = /<script|javascript:|onerror\s*=/i.test(payload);
-      if (reflected && isScriptish) {
+    // Only counts when the payload is distinctive enough to be ours, is script
+    // capable, and is not already present in the benign baseline.
+    if (isSuccess) {
+      for (const payload of extractPayloads(testCase)) {
+        if (payload.length < 8) continue;
+        if (!/<script|javascript:|onerror\s*=|<img[\s>]|<svg[\s>]/i.test(payload)) continue;
+        if (!body.includes(payload)) continue;
+        if (baselineBody.includes(payload.toLowerCase())) continue;
+
         record("payload-reflected", "Attack payload reflected unescaped", payload);
+        break;
       }
     }
 
     // --- Proof: privileged field accepted via mass assignment ---------------
+    //
+    // Mass assignment means WE SENT a privileged value and the server bound it.
+    // Merely seeing "role":"admin" in a response is not proof: an endpoint that
+    // legitimately returns a user record will contain exactly that, and reading
+    // it as mass assignment reports every user-lookup endpoint as exploitable.
     if (isSuccess) {
-      const privileged = matchWithExcerpt(
-        body,
-        /"(?:role|is_?admin|isAdmin|permissions?|scope)"\s*:\s*(?:"(?:admin|superuser|root)"|true)/i
-      );
-      if (privileged && !baselineBody.includes(privileged.toLowerCase())) {
-        record("privileged-field", "Privileged field accepted and echoed", privileged);
+      const sent = privilegedFieldsSent(testCase);
+      for (const { field, value } of sent) {
+        const echoed = matchWithExcerpt(
+          body,
+          new RegExp(`"${escapeRegex(field)}"\\s*:\\s*"?${escapeRegex(value)}"?`, "i")
+        );
+        if (echoed && !baselineBody.includes(echoed.toLowerCase())) {
+          record("privileged-field", `Privileged field '${field}' was sent and accepted`, echoed);
+          break;
+        }
       }
     }
 
-    // --- Proof: authorization bypass ----------------------------------------
-    // A 2xx from an attack request where the benign baseline was rejected.
-    if (isSuccess && baseline && baseline.status >= 400 && expected.statusCodes?.includes(status)) {
-      record(
-        "auth-bypass",
-        `Attack returned ${status} where baseline returned ${baseline.status}`,
-        `baseline=${baseline.status} attack=${status}`
+    // --- NOT a proof: status change between baseline and attack -------------
+    //
+    // A 4xx baseline turning into a 2xx attack cannot establish an auth bypass.
+    // captureBaselines strips the query string, so any endpoint that requires a
+    // parameter returns 4xx unparameterised and 2xx once parameters are
+    // supplied. Reading that as authorization bypass fired on three unrelated
+    // endpoints of the demo API, including a plain search route.
+    //
+    // Proving auth bypass requires comparing an authenticated request against an
+    // unauthenticated one, which is what multi-role scanning does, not a
+    // benign-versus-attack payload diff. Recorded as an observation only.
+    if (isSuccess && baseline && baseline.status >= 400) {
+      matchedCriteria.push(
+        `Returned ${status} where the parameterless baseline returned ${baseline.status}`
       );
     }
 
@@ -464,18 +483,69 @@ function matchWithExcerpt(body: string, pattern: RegExp): string | undefined {
   return body.slice(start, (match.index ?? 0) + match[0].length + 40).trim();
 }
 
-/** Best-effort extraction of the attack string this test case sent. */
-function extractPayload(testCase: SecurityTestCase): string | undefined {
-  const fromPath = testCase.request.path.includes("?")
-    ? decodeURIComponent(testCase.request.path.split("?")[1] ?? "")
-    : undefined;
+const PRIVILEGED_FIELD = /^(role|is_?admin|isadmin|permissions?|scope|privilege|admin)$/i;
+const PRIVILEGED_VALUE = /^(admin|superuser|root|true|1)$/i;
+
+/**
+ * Privileged fields this test case actually sent, in body or query string.
+ * Mass assignment cannot be proven from a response alone; we have to know we
+ * supplied the value in the first place.
+ */
+function privilegedFieldsSent(testCase: SecurityTestCase): Array<{ field: string; value: string }> {
+  const found: Array<{ field: string; value: string }> = [];
+
+  const consider = (field: string, value: unknown) => {
+    const str = String(value);
+    if (PRIVILEGED_FIELD.test(field) && PRIVILEGED_VALUE.test(str)) {
+      found.push({ field, value: str });
+    }
+  };
 
   if (testCase.request.body && typeof testCase.request.body === "object") {
-    const values = Object.values(testCase.request.body as Record<string, unknown>)
-      .filter((v): v is string => typeof v === "string")
-      .sort((a, b) => b.length - a.length);
-    if (values.length > 0) return values[0];
+    for (const [field, value] of Object.entries(testCase.request.body as Record<string, unknown>)) {
+      consider(field, value);
+    }
   }
 
-  return fromPath;
+  const queryStart = testCase.request.path.indexOf("?");
+  if (queryStart >= 0) {
+    const params = new URLSearchParams(testCase.request.path.slice(queryStart + 1));
+    for (const [field, value] of params.entries()) {
+      consider(field, value);
+    }
+  }
+
+  return found;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * The individual attack VALUES this test case sent, longest first.
+ *
+ * Values, not the raw query string. An earlier version returned
+ * `q=<script>alert(1)</script>` including the parameter name, so the reflection
+ * check compared against a string the response could never contain and every
+ * reflected XSS was missed.
+ */
+function extractPayloads(testCase: SecurityTestCase): string[] {
+  const values: string[] = [];
+
+  if (testCase.request.body && typeof testCase.request.body === "object") {
+    for (const value of Object.values(testCase.request.body as Record<string, unknown>)) {
+      if (typeof value === "string") values.push(value);
+    }
+  }
+
+  const queryStart = testCase.request.path.indexOf("?");
+  if (queryStart >= 0) {
+    const params = new URLSearchParams(testCase.request.path.slice(queryStart + 1));
+    for (const value of params.values()) {
+      values.push(value);
+    }
+  }
+
+  return values.sort((a, b) => b.length - a.length);
 }
