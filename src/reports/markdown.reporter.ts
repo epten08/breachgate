@@ -3,11 +3,7 @@ import { ReportingConfig } from "../core/config.loader.js";
 import { sortByRisk } from "../findings/normalizer.js";
 import { RiskEngine, Remediation } from "../findings/risk.engine.js";
 import { AttackAnalyzer, SecurityVerdict } from "../findings/attack.analyzer.js";
-import {
-  feasibilityLabel,
-  explainExploitability,
-  scoreFinding,
-} from "../findings/score.js";
+import { feasibilityLabel, explainExploitability, scoreFinding } from "../findings/score.js";
 
 export interface MarkdownReporterOptions {
   targetUrl: string;
