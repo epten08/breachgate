@@ -1,3 +1,15 @@
+# Publishes the GitHub Action to the Marketplace by tagging main and cutting a
+# GitHub Release.
+#
+# This does NOT publish to npm. The tag below is pushed with the default
+# GITHUB_TOKEN, and GitHub deliberately does not trigger workflows from events
+# created with that token, so release.yml is not started by it. Publishing to
+# npm is a separate, deliberate action:
+#
+#   gh workflow run release.yml --ref v<version> -f publish=true
+#
+# For a security tool that is arguably the right default: a human decides when
+# a build reaches the registry.
 name: Auto Release
 
 on:
@@ -42,6 +54,21 @@ jobs:
         run: |
           git tag "v${{ steps.version.outputs.version }}"
           git push origin "v${{ steps.version.outputs.version }}"
+
+      # Consumers pin an Action by its major version: `uses: epten08/breachgate@v2`.
+      # Only the exact v2.0.0 tag was ever created, so that reference did not
+      # resolve and the documented usage in the README was broken. Move the
+      # floating major tag to this release, which is the standard convention for
+      # actions published to the Marketplace.
+      #
+      # Runs on every release, not just new ones, so the pointer cannot drift.
+      - name: Move floating major version tag
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          major="v${version%%.*}"
+          echo "pointing $major at v$version"
+          git tag -f "$major"
+          git push origin -f "$major"
 
       - name: Create GitHub Release
         if: steps.check.outputs.exists == 'false'

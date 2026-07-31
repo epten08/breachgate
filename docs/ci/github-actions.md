@@ -2,9 +2,9 @@
 
 Use these examples when Breach Gate is published as either:
 
-- a composite action, for example `epten08/breach-gate@v1`
+- a composite action, for example `epten08/breachgate@v2`
 - an npm package, for example `npx breach-gate@1.0.0`
-- a container image, for example `ghcr.io/epten08/breach-gate:1.0.0`
+- a container image, for example `ghcr.io/epten08/breach-gate:2.0.0`
 
 Replace `epten08/breach-gate` and image names with the release location used by this project.
 
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Breach Gate
-        uses: epten08/breach-gate@v1
+        uses: epten08/breachgate@v2
         with:
           config: security.config.yml
           target: ${{ vars.SECURITY_BOT_API_URL }}
@@ -68,7 +68,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Breach Gate
-        uses: epten08/breach-gate@v1
+        uses: epten08/breachgate@v2
         with:
           config: security.config.yml
           target: ${{ vars.STAGING_API_URL }}
@@ -110,7 +110,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run Breach Gate
-        uses: epten08/breach-gate@v1
+        uses: epten08/breachgate@v2
         with:
           config: security.config.yml
           target: ${{ vars.NIGHTLY_API_URL }}
@@ -138,7 +138,7 @@ The container image is useful when a CI environment should not install Node or T
       -w /workspace \
       -v /var/run/docker.sock:/var/run/docker.sock \
       -e JWT_TOKEN="${{ secrets.SECURITY_BOT_JWT_TOKEN }}" \
-      ghcr.io/epten08/breach-gate:1.0.0 \
+      ghcr.io/epten08/breach-gate:2.0.0 \
       scan --ci --config security.config.yml --profile main --format json,markdown,sarif --output security-reports
 ```
 
